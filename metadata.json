@@ -1,0 +1,6 @@
+{
+  "name": "Raffle Studio 2026",
+  "description": "Customizable automated raffle draw system with Google Drive integration for RAFFLE ENTRIES 2026, sequenced rounds (150, 50, 35, 25 winners), auto-removal of winners from the main pool, live draw animations, and winners management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

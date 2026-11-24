@@ -224,7 +224,7 @@ export const WinnersView: React.FC<WinnersViewProps> = ({
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                R{round.order}: {count}/{round.winnerCount}
+                {round.isBonusRound ? '🎁 ' : ''}R{round.order}: {count}/{round.winnerCount}
               </button>
             );
           })}
@@ -313,9 +313,16 @@ export const WinnersView: React.FC<WinnersViewProps> = ({
                           />
                         </td>
                         <td className="px-4 py-3 text-xs tabular-nums">
-                          <span className="font-mono font-semibold text-slate-700">
-                            R{roundMap.get(w.roundId)?.order ?? w.roundOrder} · #{String(w.slotNumber).padStart(3, '0')}
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-mono font-semibold text-slate-700">
+                              R{roundMap.get(w.roundId)?.order ?? w.roundOrder} · #{String(w.slotNumber).padStart(3, '0')}
+                            </span>
+                            {roundMap.get(w.roundId)?.isBonusRound && (
+                              <span className="rounded bg-amber-100 px-1.5 py-0.2 text-[10px] font-bold text-amber-800">
+                                Bonus
+                              </span>
+                            )}
+                          </div>
                           <div className="text-slate-500">{roundMap.get(w.roundId)?.prize ?? w.prize}</div>
                         </td>
                         <td className="px-4 py-3 font-semibold text-slate-950">

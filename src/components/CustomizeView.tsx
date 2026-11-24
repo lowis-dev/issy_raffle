@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowDown, ArrowUp, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Gift, Plus, RotateCcw, Trash2 } from 'lucide-react';
 import type { RaffleRound, RaffleSettings, ThemeAccent, WinnerRecord } from '../types/raffle';
 import { THEME_PALETTES, type ThemePalette } from '../utils/theme';
 
@@ -14,6 +14,7 @@ interface CustomizeViewProps {
   onAddRound: () => void;
   onDeleteRound: (roundId: string) => void;
   onRestoreDefaultSequence: () => void;
+  onOpenBonusModal?: () => void;
 }
 
 const ACCENT_OPTIONS: ThemeAccent[] = ['emerald', 'blue', 'crimson', 'amber', 'slate'];
@@ -35,6 +36,7 @@ export const CustomizeView: React.FC<CustomizeViewProps> = ({
   onAddRound,
   onDeleteRound,
   onRestoreDefaultSequence,
+  onOpenBonusModal,
 }) => {
   const sortedRounds = [...rounds].sort((a, b) => a.order - b.order);
   const totalWinnersPlanned = sortedRounds.reduce((acc, r) => acc + r.winnerCount, 0);
@@ -80,6 +82,14 @@ export const CustomizeView: React.FC<CustomizeViewProps> = ({
               <Plus className="h-3.5 w-3.5" aria-hidden="true" />
               Add Round
             </button>
+            <button
+              type="button"
+              onClick={onOpenBonusModal}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3.5 text-xs font-bold text-amber-900 hover:bg-amber-100 whitespace-nowrap shrink-0"
+            >
+              <Gift className="h-3.5 w-3.5 text-amber-600" aria-hidden="true" />
+              + Bonus Round
+            </button>
           </div>
         </div>
 
@@ -95,12 +105,19 @@ export const CustomizeView: React.FC<CustomizeViewProps> = ({
                 className="grid grid-cols-1 gap-3 py-4 sm:grid-cols-12 sm:items-end"
               >
                 <div className="sm:col-span-4">
-                  <label
-                    htmlFor={`round-title-${round.id}`}
-                    className="block text-xs font-medium text-slate-500"
-                  >
-                    Round {round.order} Title
-                  </label>
+                  <div className="flex items-center gap-1.5">
+                    <label
+                      htmlFor={`round-title-${round.id}`}
+                      className="block text-xs font-medium text-slate-500"
+                    >
+                      Round {round.order} Title
+                    </label>
+                    {round.isBonusRound && (
+                      <span className="rounded bg-amber-100 px-1.5 py-0.2 text-[10px] font-bold text-amber-800">
+                        Bonus Pool ({round.bonusPool?.length ?? 0})
+                      </span>
+                    )}
+                  </div>
                   <input
                     id={`round-title-${round.id}`}
                     type="text"

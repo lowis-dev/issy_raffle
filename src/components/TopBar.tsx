@@ -1,5 +1,5 @@
 import React from 'react';
-import { Menu, Upload, X } from 'lucide-react';
+import { Gift, Menu, Upload, X } from 'lucide-react';
 import type { ActiveTab } from '../types/raffle';
 import type { ThemePalette } from '../utils/theme';
 
@@ -7,6 +7,7 @@ interface TopBarProps {
   activeTab: ActiveTab;
   onSelectTab: (tab: ActiveTab) => void;
   onOpenDriveModal: () => void;
+  onOpenBonusModal: () => void;
   isDriveConnected: boolean;
   palette: ThemePalette;
   mobileMenuOpen: boolean;
@@ -24,6 +25,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   activeTab,
   onSelectTab,
   onOpenDriveModal,
+  onOpenBonusModal,
   isDriveConnected,
   palette,
   mobileMenuOpen,
@@ -84,8 +86,17 @@ export const TopBar: React.FC<TopBarProps> = ({
           })}
         </nav>
 
-        {/* Zone 3: 1 primary action */}
-        <div className="flex items-center shrink-0">
+        {/* Zone 3: Actions */}
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={onOpenBonusModal}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900 hover:bg-amber-100 transition-colors shadow-2xs whitespace-nowrap shrink-0 sm:text-xs"
+          >
+            <Gift className="h-4 w-4 text-amber-600" aria-hidden="true" />
+            <span>+ Bonus Round</span>
+          </button>
+
           <button
             type="button"
             onClick={onOpenDriveModal}

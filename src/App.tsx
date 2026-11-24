@@ -34,6 +34,7 @@ import { WinnersView } from './components/WinnersView';
 import { CustomizeView } from './components/CustomizeView';
 import { DriveImportModal, type ImportModalTab } from './components/DriveImportModal';
 import { ConfirmModal } from './components/ConfirmModal';
+import { BonusRoundModal } from './components/BonusRoundModal';
 
 const STORAGE_KEY = 'raffle_studio_2026_state_v1';
 
@@ -106,10 +107,39 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [driveModalOpen, setDriveModalOpen] = useState(false);
   const [driveModalInitialTab, setDriveModalInitialTab] = useState<ImportModalTab>('upload');
+  const [bonusModalOpen, setBonusModalOpen] = useState(false);
+  const [editingBonusRound, setEditingBonusRound] = useState<RaffleRound | null>(null);
 
   const openImportModal = (tab: ImportModalTab = 'upload') => {
     setDriveModalInitialTab(tab);
     setDriveModalOpen(true);
+  };
+
+  const handleOpenBonusModal = (round?: RaffleRound) => {
+    setEditingBonusRound(round ?? null);
+    setBonusModalOpen(true);
+  };
+
+  const handleSaveBonusRound = (
+    round: RaffleRound,
+    options: { startImmediately: boolean }
+  ) => {
+    if (editingBonusRound) {
+      setRounds((prev) => prev.map((r) => (r.id === round.id ? round : r)));
+      showToast(`Updated ${round.title} with ${round.winnerCount} winners.`);
+    } else {
+      setRounds((prev) => [...prev, round]);
+      if (options.startImmediately) {
+        setActiveRoundId(round.id);
+        setLatestBatchWinners([]);
+        setActiveTab('stage');
+        showToast(
+          `Started ${round.title} with ${round.winnerCount} winners from ${round.bonusPool?.length ?? 0} entries.`
+        );
+      } else {
+        showToast(`Added ${round.title} to Draw Sequence.`);
+      }
+    }
   };
 
   // Toast feedback & Confirm modal
@@ -222,8 +252,11 @@ export default function App() {
   };
 
   const handleExecuteDraw = (requestedCount: number): WinnerRecord[] => {
+    const isBonus = Boolean(activeRound.isBonusRound);
+    const poolToUse = isBonus ? (activeRound.bonusPool ?? []) : pool;
+
     const result = drawWinnersFromPool({
-      pool,
+      pool: poolToUse,
       round: activeRound,
       existingRoundWinners: winners,
       requestedCount,
@@ -233,29 +266,45 @@ export default function App() {
 
     if (result.drawnCount === 0) return [];
 
-    setPool(result.remainingPool);
+    if (isBonus) {
+      setRounds((prev) =>
+        prev.map((r) =>
+          r.id === activeRound.id ? { ...r, bonusPool: result.remainingPool } : r
+        )
+      );
+    } else {
+      setPool(result.remainingPool);
+    }
+
     setWinners((prev) => [...prev, ...result.newWinners]);
     setLatestBatchWinners(result.newWinners);
 
     showToast(
       `Drew ${result.drawnCount} ${result.drawnCount === 1 ? 'winner' : 'winners'} for ${
         activeRound.title
-      }${settings.removeWinnerFromPool ? ' and removed from Main List' : ''}.`
+      }${isBonus ? ' (Bonus Round)' : settings.removeWinnerFromPool ? ' and removed from Main List' : ''}.`
     );
 
     return result.newWinners;
   };
 
   const performRedraw = (winnerId: string) => {
-    if (pool.length === 0) {
-      showToast('Cannot redraw because the Main Pool has no remaining participants.');
+    const winner = winners.find((w) => w.id === winnerId);
+    const round = rounds.find((r) => r.id === winner?.roundId) ?? activeRound;
+    const isBonus = Boolean(round.isBonusRound);
+    const poolToUse = isBonus ? (round.bonusPool ?? []) : pool;
+
+    if (poolToUse.length === 0) {
+      showToast(
+        `Cannot redraw because the ${isBonus ? 'Bonus' : 'Main'} Pool has no remaining participants.`
+      );
       return;
     }
 
     const res = redrawSingleWinner({
       winnerId,
       winners,
-      pool,
+      pool: poolToUse,
       removeWinnerFromPool: settings.removeWinnerFromPool,
       removeAllEntriesByName: settings.removeAllEntriesByName,
     });
@@ -263,7 +312,16 @@ export default function App() {
     if (!res.replacementWinner) return;
 
     setWinners(res.updatedWinners);
-    setPool(res.remainingPool);
+    if (isBonus) {
+      setRounds((prev) =>
+        prev.map((r) =>
+          r.id === round.id ? { ...r, bonusPool: res.remainingPool } : r
+        )
+      );
+    } else {
+      setPool(res.remainingPool);
+    }
+
     setLatestBatchWinners((prev) =>
       prev.map((w) => (w.id === winnerId ? res.replacementWinner! : w))
     );
@@ -535,6 +593,7 @@ export default function App() {
         activeTab={activeTab}
         onSelectTab={setActiveTab}
         onOpenDriveModal={() => openImportModal('upload')}
+        onOpenBonusModal={() => handleOpenBonusModal()}
         isDriveConnected={Boolean(accessToken)}
         palette={palette}
         mobileMenuOpen={mobileMenuOpen}
@@ -547,15 +606,16 @@ export default function App() {
           rounds={sortedRounds}
           winners={winners}
           activeRoundId={activeRound.id}
-          remainingPoolCount={pool.length}
+          remainingPoolCount={activeRound.isBonusRound ? (activeRound.bonusPool?.length ?? 0) : pool.length}
           removeWinnerFromPool={settings.removeWinnerFromPool}
-          dataSource={dataSource}
+          dataSource={activeRound.isBonusRound ? { type: 'manual', label: `Bonus Pool (${activeRound.bonusPool?.length ?? 0} entries)`, loadedAt: new Date().toISOString(), originalCount: activeRound.bonusPool?.length ?? 0 } : dataSource}
           palette={palette}
           onSelectRound={(id) => {
             setActiveRoundId(id);
             setActiveTab('stage');
           }}
           onOpenCustomize={() => setActiveTab('customize')}
+          onOpenBonusModal={() => handleOpenBonusModal()}
         />
 
         <main className="flex-1 min-w-0 px-4 py-6 sm:px-8 sm:py-8">
@@ -584,7 +644,7 @@ export default function App() {
             <DrawStage
               activeRound={activeRound}
               nextRound={nextRound}
-              pool={pool}
+              pool={activeRound.isBonusRound ? (activeRound.bonusPool ?? []) : pool}
               roundWinners={activeRoundWinners}
               latestBatchWinners={latestBatchWinners}
               settings={settings}
@@ -605,6 +665,7 @@ export default function App() {
                 setSettings((prev) => ({ ...prev, confettiEnabled: !prev.confettiEnabled }))
               }
               onViewAllWinners={() => setActiveTab('winners')}
+              onOpenBonusModal={(round) => handleOpenBonusModal(round)}
             />
           )}
 
@@ -651,6 +712,7 @@ export default function App() {
               onAddRound={handleAddRound}
               onDeleteRound={handleDeleteRound}
               onRestoreDefaultSequence={handleRestoreDefaultSequence}
+              onOpenBonusModal={() => handleOpenBonusModal()}
             />
           )}
         </main>
@@ -682,6 +744,19 @@ export default function App() {
         }
         palette={palette}
         initialTab={driveModalInitialTab}
+      />
+
+      {/* Bonus Round Creator & Manager Modal */}
+      <BonusRoundModal
+        open={bonusModalOpen}
+        onClose={() => {
+          setBonusModalOpen(false);
+          setEditingBonusRound(null);
+        }}
+        existingRoundCount={rounds.length}
+        editingRound={editingBonusRound}
+        onSaveBonusRound={handleSaveBonusRound}
+        palette={palette}
       />
 
       {/* Reusable Confirmation Modal */}

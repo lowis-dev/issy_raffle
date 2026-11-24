@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronUp,
   FastForward,
+  Gift,
   Maximize2,
   Minimize2,
   Pause,
@@ -13,6 +14,7 @@ import {
   RotateCcw,
   Sparkles,
   Trophy,
+  Users,
   Volume2,
   VolumeX,
 } from 'lucide-react';
@@ -36,6 +38,7 @@ interface DrawStageProps {
   onToggleSound: () => void;
   onToggleConfetti: () => void;
   onViewAllWinners: () => void;
+  onOpenBonusModal?: (round?: RaffleRound) => void;
 }
 
 type RevealSpeed = 'fast' | 'normal' | 'dramatic';
@@ -60,6 +63,7 @@ export const DrawStage: React.FC<DrawStageProps> = ({
   onToggleSound,
   onToggleConfetti,
   onViewAllWinners,
+  onOpenBonusModal,
 }) => {
   const activeWinners = useMemo(
     () => roundWinners.filter((w) => w.status === 'active'),
@@ -352,6 +356,12 @@ export const DrawStage: React.FC<DrawStageProps> = ({
             <span className="font-semibold text-slate-800">{settings.eventTitle}</span>
             <span aria-hidden="true">·</span>
             <span>Round {activeRound.order}</span>
+            {activeRound.isBonusRound && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-900 border border-amber-300">
+                <Gift className="h-3 w-3 text-amber-700" />
+                Bonus Round
+              </span>
+            )}
             <span aria-hidden="true">·</span>
             <span>{activeRound.prize}</span>
           </div>
@@ -362,6 +372,27 @@ export const DrawStage: React.FC<DrawStageProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {/* Bonus Round Management / Creator Button */}
+          {activeRound.isBonusRound ? (
+            <button
+              type="button"
+              onClick={() => onOpenBonusModal?.(activeRound)}
+              className="inline-flex h-10 items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3.5 text-xs font-bold text-amber-900 hover:bg-amber-100 transition-colors shadow-2xs whitespace-nowrap shrink-0"
+            >
+              <Users className="h-4 w-4 text-amber-600" aria-hidden="true" />
+              Manage Names ({pool.length})
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onOpenBonusModal?.()}
+              className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 whitespace-nowrap shrink-0"
+            >
+              <Gift className="h-4 w-4 text-amber-500" aria-hidden="true" />
+              + Bonus Round
+            </button>
+          )}
+
           {/* Live Draw Showcase Trigger */}
           {(currentBatchMatchesRound || activeWinners.length > 0) && !isSequenceActive && (
             <button
@@ -443,7 +474,9 @@ export const DrawStage: React.FC<DrawStageProps> = ({
             </p>
           </div>
           <div>
-            <p className="text-xs text-slate-500">Eligible Main Pool</p>
+            <p className="text-xs text-slate-500">
+              {activeRound.isBonusRound ? 'Bonus Pool Entries' : 'Eligible Main Pool'}
+            </p>
             <p
               data-testid="stage-pool-remaining"
               className="mt-1 font-mono text-2xl font-bold text-slate-950 tabular-nums"
@@ -451,7 +484,9 @@ export const DrawStage: React.FC<DrawStageProps> = ({
               {pool.length.toLocaleString()}
             </p>
             <p className="mt-0.5 text-xs text-slate-500">
-              {settings.removeWinnerFromPool
+              {activeRound.isBonusRound
+                ? 'Dedicated list for this bonus draw'
+                : settings.removeWinnerFromPool
                 ? 'Picked names are auto-removed'
                 : 'Winners stay in pool'}
             </p>
@@ -649,12 +684,32 @@ export const DrawStage: React.FC<DrawStageProps> = ({
               </div>
             </div>
           ) : pool.length === 0 ? (
-            <div className="max-w-md py-4">
-              <h2 className="text-lg font-bold text-slate-900">Main Pool is Empty</h2>
-              <p className="mt-1.5 text-sm text-slate-600">
-                Load your entries from Google Drive (RAFFLE ENTRIES 2026), upload a CSV/Excel file, or add participants in the Main List tab.
-              </p>
-            </div>
+            activeRound.isBonusRound ? (
+              <div className="max-w-md py-4">
+                <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+                  <Gift className="h-6 w-6" aria-hidden="true" />
+                </div>
+                <h2 className="mt-3 text-lg font-bold text-slate-900">No Participants Entered Yet</h2>
+                <p className="mt-1 text-xs text-slate-500">
+                  This Bonus Round uses its own participant list. Input or paste names to begin the draw.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => onOpenBonusModal?.(activeRound)}
+                  className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-2 text-xs font-bold text-white hover:bg-amber-600 shadow-sm transition-colors"
+                >
+                  <Users className="h-3.5 w-3.5" />
+                  Input Names for Bonus Round
+                </button>
+              </div>
+            ) : (
+              <div className="max-w-md py-4">
+                <h2 className="text-lg font-bold text-slate-900">Main Pool is Empty</h2>
+                <p className="mt-1.5 text-sm text-slate-600">
+                  Load your entries from Google Drive (RAFFLE ENTRIES 2026), upload a CSV/Excel file, or add participants in the Main List tab.
+                </p>
+              </div>
+            )
           ) : latestBatchWinners.length === 1 && currentBatchMatchesRound ? (
             <div className="w-full max-w-xl py-2" aria-live="polite">
               <p className="text-xs font-medium text-slate-500">

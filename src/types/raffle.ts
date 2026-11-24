@@ -18,6 +18,8 @@ export interface RaffleRound {
   prize: string;
   winnerCount: number;
   defaultBatchSize: number;
+  isBonusRound?: boolean;
+  bonusPool?: Participant[];
 }
 
 export interface WinnerRecord {

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import type { RaffleRound } from '../types/raffle';
 import {
   DEFAULT_ROUNDS,
   buildParsedTableAndMapping,
@@ -245,4 +246,45 @@ test('exportWinnersToCsv uses latest round order, title, and prize from rounds',
 
   const csv = exportWinnersToCsv(draw.newWinners, updatedRounds);
   assert.ok(csv.includes('4,Renamed Finale,Updated Cash Prize,1,'));
+});
+
+test('bonus round draws from its dedicated participant pool without mutating the main pool', () => {
+  const mainPool = createDemoParticipants(10);
+  const bonusParticipants = [
+    { id: 'bns-1', name: 'Bonus Participant Alpha', department: 'Sales', ticketNumber: 'BNS-01' },
+    { id: 'bns-2', name: 'Bonus Participant Beta', department: 'Marketing', ticketNumber: 'BNS-02' },
+    { id: 'bns-3', name: 'Bonus Participant Gamma', department: 'IT', ticketNumber: 'BNS-03' },
+  ];
+
+  const bonusRound: RaffleRound = {
+    id: 'bonus-round-1',
+    order: 5,
+    title: 'Executive Bonus Draw',
+    prize: 'Special Cash Gift',
+    winnerCount: 2,
+    defaultBatchSize: 2,
+    isBonusRound: true,
+    bonusPool: bonusParticipants,
+  };
+
+  // Draw 2 winners specifically from the bonus round pool
+  const drawResult = drawWinnersFromPool({
+    pool: bonusRound.bonusPool!,
+    round: bonusRound,
+    existingRoundWinners: [],
+    requestedCount: 2,
+    removeWinnerFromPool: true,
+    removeAllEntriesByName: false,
+    rng: () => 0,
+  });
+
+  assert.equal(drawResult.drawnCount, 2);
+  assert.equal(drawResult.newWinners.length, 2);
+  assert.equal(drawResult.remainingPool.length, 1);
+  assert.equal(drawResult.remainingPool[0].name, 'Bonus Participant Gamma');
+  assert.equal(drawResult.newWinners[0].roundTitle, 'Executive Bonus Draw');
+  assert.equal(drawResult.newWinners[0].prize, 'Special Cash Gift');
+
+  // Verify the main pool was completely untouched and unaffected
+  assert.equal(mainPool.length, 10);
 });

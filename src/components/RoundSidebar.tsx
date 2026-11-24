@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, Circle, SlidersHorizontal } from 'lucide-react';
+import { CheckCircle2, Circle, Gift, SlidersHorizontal } from 'lucide-react';
 import type { DataSourceInfo, RaffleRound, WinnerRecord } from '../types/raffle';
 import { getRoundProgress } from '../utils/raffleEngine';
 import type { ThemePalette } from '../utils/theme';
@@ -14,6 +14,7 @@ interface RoundSidebarProps {
   palette: ThemePalette;
   onSelectRound: (roundId: string) => void;
   onOpenCustomize: () => void;
+  onOpenBonusModal: () => void;
 }
 
 export const RoundSidebar: React.FC<RoundSidebarProps> = ({
@@ -26,6 +27,7 @@ export const RoundSidebar: React.FC<RoundSidebarProps> = ({
   palette,
   onSelectRound,
   onOpenCustomize,
+  onOpenBonusModal,
 }) => {
   const progressList = getRoundProgress(rounds, winners);
   const totalTarget = progressList.reduce((acc, item) => acc + item.round.winnerCount, 0);
@@ -56,15 +58,24 @@ export const RoundSidebar: React.FC<RoundSidebarProps> = ({
                 onClick={() => onSelectRound(round.id)}
                 className={`rounded-lg border px-3 py-1.5 text-xs font-semibold tabular-nums whitespace-nowrap shrink-0 transition-colors ${
                   isSelected
-                    ? `${palette.softBg} ${palette.softBorder} ${palette.softText}`
+                    ? round.isBonusRound
+                      ? 'border-amber-300 bg-amber-50 text-amber-900 font-bold'
+                      : `${palette.softBg} ${palette.softBorder} ${palette.softText}`
                     : 'border-slate-200 bg-white text-slate-600'
                 }`}
               >
-                R{round.order}: {drawn}/{round.winnerCount}
+                {round.isBonusRound ? '🎁 ' : ''}R{round.order}: {drawn}/{round.winnerCount}
                 {isComplete ? ' ✓' : ''}
               </button>
             );
           })}
+          <button
+            type="button"
+            onClick={onOpenBonusModal}
+            className="rounded-lg border border-dashed border-amber-300 bg-amber-50/70 px-2.5 py-1.5 text-xs font-bold text-amber-800 whitespace-nowrap shrink-0 hover:bg-amber-100"
+          >
+            + Bonus
+          </button>
         </div>
       </div>
 
@@ -133,14 +144,23 @@ export const RoundSidebar: React.FC<RoundSidebarProps> = ({
                         <span className="font-mono font-semibold tabular-nums">
                           {String(round.order).padStart(2, '0')}.
                         </span>
+                        {round.isBonusRound && (
+                          <span className="rounded bg-amber-100 px-1.5 py-0.2 text-[10px] font-bold text-amber-800">
+                            Bonus
+                          </span>
+                        )}
                         <span>{isComplete ? 'Completed' : isSelected ? 'Active' : 'Queued'}</span>
                       </div>
                       <p
                         className={`mt-0.5 truncate text-sm font-semibold ${
-                          isSelected ? palette.softText : 'text-slate-900'
+                          isSelected
+                            ? round.isBonusRound
+                              ? 'text-amber-900 font-bold'
+                              : palette.softText
+                            : 'text-slate-900'
                         }`}
                       >
-                        {round.title}
+                        {round.isBonusRound ? '🎁 ' : ''}{round.title}
                       </p>
                       <p className="mt-0.5 truncate text-xs text-slate-500">{round.prize}</p>
                     </div>
@@ -149,7 +169,7 @@ export const RoundSidebar: React.FC<RoundSidebarProps> = ({
                         <CheckCircle2 className="h-4 w-4 text-emerald-600" aria-hidden="true" />
                       ) : (
                         <Circle
-                          className={`h-4 w-4 ${isSelected ? palette.primaryText : 'text-slate-300'}`}
+                          className={`h-4 w-4 ${isSelected ? (round.isBonusRound ? 'text-amber-500' : palette.primaryText) : 'text-slate-300'}`}
                           aria-hidden="true"
                         />
                       )}
@@ -175,6 +195,15 @@ export const RoundSidebar: React.FC<RoundSidebarProps> = ({
             );
           })}
         </ol>
+
+        <button
+          type="button"
+          onClick={onOpenBonusModal}
+          className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-amber-300 bg-amber-50/60 py-2.5 text-xs font-bold text-amber-900 hover:bg-amber-100/80 transition-colors shadow-2xs"
+        >
+          <Gift className="h-4 w-4 text-amber-600" />
+          + Add Bonus Round
+        </button>
       </div>
     </aside>
   );

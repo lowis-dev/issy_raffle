@@ -251,12 +251,6 @@ export const DrawStage: React.FC<DrawStageProps> = ({
     setIsPaused(false);
     setIsSequenceActive(true);
 
-    // If batch size is large (> 25), default to fast unless user picked dramatic
-    if (drawCount > 25 && speed === 'dramatic') {
-      setSpeed('fast');
-      speedRef.current = 'fast';
-    }
-
     runNextRevealStep(newlyDrawn, 0, []);
   };
 

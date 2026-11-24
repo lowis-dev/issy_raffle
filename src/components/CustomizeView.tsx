@@ -1,5 +1,16 @@
-import React from 'react';
-import { ArrowDown, ArrowUp, Gift, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import React, { useRef } from 'react';
+import {
+  ArrowDown,
+  ArrowUp,
+  Download,
+  Gift,
+  Plus,
+  RotateCcw,
+  Save,
+  Trash2,
+  Upload,
+  Volume2,
+} from 'lucide-react';
 import type { RaffleRound, RaffleSettings, ThemeAccent, WinnerRecord } from '../types/raffle';
 import { THEME_PALETTES, type ThemePalette } from '../utils/theme';
 
@@ -15,6 +26,8 @@ interface CustomizeViewProps {
   onDeleteRound: (roundId: string) => void;
   onRestoreDefaultSequence: () => void;
   onOpenBonusModal?: () => void;
+  onExportBackup?: () => void;
+  onImportBackup?: (jsonText: string) => void;
 }
 
 const ACCENT_OPTIONS: ThemeAccent[] = ['emerald', 'blue', 'crimson', 'amber', 'slate'];
@@ -37,6 +50,8 @@ export const CustomizeView: React.FC<CustomizeViewProps> = ({
   onDeleteRound,
   onRestoreDefaultSequence,
   onOpenBonusModal,
+  onExportBackup,
+  onImportBackup,
 }) => {
   const sortedRounds = [...rounds].sort((a, b) => a.order - b.order);
   const totalWinnersPlanned = sortedRounds.reduce((acc, r) => acc + r.winnerCount, 0);
@@ -304,6 +319,23 @@ export const CustomizeView: React.FC<CustomizeViewProps> = ({
               className="mt-1 h-4 w-4 rounded border-slate-300"
             />
           </label>
+
+          <label className="flex cursor-pointer items-start justify-between gap-4 py-3.5">
+            <div>
+              <span className="block text-sm font-semibold text-slate-900">
+                Voice Announcer (Text-to-Speech)
+              </span>
+              <span className="mt-0.5 block text-xs text-slate-500">
+                Uses speech synthesis to announce each winner's name and prize automatically over the stage sound system.
+              </span>
+            </div>
+            <input
+              type="checkbox"
+              checked={settings.voiceAnnounceEnabled ?? false}
+              onChange={(e) => onUpdateSettings({ voiceAnnounceEnabled: e.target.checked })}
+              className="mt-1 h-4 w-4 rounded border-slate-300"
+            />
+          </label>
         </div>
       </div>
 
@@ -390,6 +422,48 @@ export const CustomizeView: React.FC<CustomizeViewProps> = ({
               })}
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Section 4: Event Backup & Disaster Recovery */}
+      <div className="rounded-xl border border-slate-200 bg-white p-6">
+        <h2 className="text-base font-bold text-slate-900">
+          Event Backup & Disaster Recovery
+        </h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Download a complete snapshot of your event setup, eligible entries, bonus rounds, and recorded winners.
+        </p>
+
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={onExportBackup}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs"
+          >
+            <Download className="h-4 w-4 text-emerald-600" />
+            Download Event Backup (JSON)
+          </button>
+
+          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs">
+            <Upload className="h-4 w-4 text-indigo-600" />
+            <span>Restore Event from Backup</span>
+            <input
+              type="file"
+              accept=".json"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                  const text = evt.target?.result as string;
+                  if (text && onImportBackup) onImportBackup(text);
+                };
+                reader.readAsText(file);
+                e.target.value = '';
+              }}
+            />
+          </label>
         </div>
       </div>
     </section>

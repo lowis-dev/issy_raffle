@@ -85,6 +85,38 @@ export const BonusRoundModal: React.FC<BonusRoundModalProps> = ({
     setParsedParticipants(mapped);
   }, [rawText]);
 
+  const duplicateCount = useMemo(() => {
+    const seen = new Set<string>();
+    let dupes = 0;
+    for (const p of parsedParticipants) {
+      const norm = p.name.trim().toLowerCase();
+      if (seen.has(norm)) {
+        dupes++;
+      } else {
+        seen.add(norm);
+      }
+    }
+    return dupes;
+  }, [parsedParticipants]);
+
+  const handleDeduplicate = () => {
+    const seen = new Set<string>();
+    const unique: Participant[] = [];
+    for (const p of parsedParticipants) {
+      const norm = p.name.trim().toLowerCase();
+      if (!seen.has(norm)) {
+        seen.add(norm);
+        unique.push(p);
+      }
+    }
+    setParsedParticipants(unique);
+    setRawText(
+      unique
+        .map((p) => [p.name, p.department, p.ticketNumber].filter(Boolean).join(', '))
+        .join('\n')
+    );
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -326,6 +358,23 @@ export const BonusRoundModal: React.FC<BonusRoundModalProps> = ({
             />
 
             {fileError && <p className="text-xs text-rose-600">{fileError}</p>}
+
+            {/* Duplicate names warning & deduplicate button */}
+            {duplicateCount > 0 && (
+              <div className="flex items-center justify-between rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <span className="flex items-center gap-1.5 font-medium">
+                  <AlertCircle className="h-4 w-4 text-amber-600 shrink-0" />
+                  {duplicateCount} duplicate {duplicateCount === 1 ? 'name' : 'names'} detected in list.
+                </span>
+                <button
+                  type="button"
+                  onClick={handleDeduplicate}
+                  className="rounded-md bg-amber-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-amber-700 transition-colors shadow-2xs"
+                >
+                  Remove Duplicates
+                </button>
+              </div>
+            )}
 
             {/* Validation / Entry counter status */}
             <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs">

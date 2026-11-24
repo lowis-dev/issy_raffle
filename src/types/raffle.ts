@@ -35,6 +35,7 @@ export interface WinnerRecord {
   claimed: boolean;
   status: 'active' | 'voided';
   replacedByWinnerId?: string;
+  voidReason?: string;
 }
 
 export interface RaffleSettings {
@@ -46,6 +47,7 @@ export interface RaffleSettings {
   animationDurationMs: number;
   soundEnabled: boolean;
   confettiEnabled: boolean;
+  voiceAnnounceEnabled?: boolean;
   showTicketNumber: boolean;
   showDepartment: boolean;
 }

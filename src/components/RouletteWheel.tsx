@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { Participant } from '../types/raffle';
-import { playTickSound, playWinFanfare } from '../utils/sound';
+import { playSpinLaunchSound, playTickSound, playWinFanfare } from '../utils/sound';
 import type { ThemePalette } from '../utils/theme';
 
 export interface RouletteWheelProps {
@@ -348,6 +348,10 @@ export const RouletteWheel: React.FC<RouletteWheelProps> = ({
 
     const startTime = performance.now();
     lastSliceIdxRef.current = getSliceUnderNeedle(startAngle);
+
+    if (soundEnabled) {
+      playSpinLaunchSound();
+    }
 
     // Quartic ease out curve
     const easeOut = (t: number): number => {

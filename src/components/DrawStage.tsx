@@ -9,13 +9,17 @@ import {
   Disc3,
   FastForward,
   Gift,
+  HelpCircle,
+  Keyboard,
   Maximize2,
   Minimize2,
   Pause,
   Play,
   RotateCcw,
+  Search,
   Shuffle,
   Sparkles,
+  Ticket,
   Trophy,
   Users,
   Volume2,
@@ -23,10 +27,13 @@ import {
 } from 'lucide-react';
 import type { Participant, RaffleRound, RaffleSettings, WinnerRecord } from '../types/raffle';
 import { secureRandomInt, secureShuffle } from '../utils/raffleEngine';
-import { playTickSound, playWinFanfare } from '../utils/sound';
+import { announceWinnerTTS, playTickSound, playWinFanfare } from '../utils/sound';
 import type { ThemePalette } from '../utils/theme';
 import { LiveDrawModal } from './LiveDrawModal';
+import { PoolSearchModal } from './PoolSearchModal';
 import { RouletteWheel } from './RouletteWheel';
+import { ShortcutsModal } from './ShortcutsModal';
+import { WinnerCelebrationModal } from './WinnerCelebrationModal';
 
 interface DrawStageProps {
   activeRound: RaffleRound;
@@ -37,7 +44,7 @@ interface DrawStageProps {
   settings: RaffleSettings;
   palette: ThemePalette;
   onExecuteDraw: (count: number) => WinnerRecord[];
-  onRedrawWinner: (winnerId: string) => void;
+  onRedrawWinner: (winnerId: string, reason?: string) => void;
   onSelectRound: (roundId: string) => void;
   onToggleSound: () => void;
   onToggleConfetti: () => void;
@@ -103,6 +110,18 @@ export const DrawStage: React.FC<DrawStageProps> = ({
   // Audience Preview Drum Roll State
   const [isPreviewRolling, setIsPreviewRolling] = useState(false);
   const [previewCompleteMessage, setPreviewCompleteMessage] = useState<string | null>(null);
+
+  // Winner Celebration Modal State
+  const [celebrationWinner, setCelebrationWinner] = useState<WinnerRecord | null>(null);
+  const [showCelebrationModal, setShowCelebrationModal] = useState<boolean>(false);
+
+  // Redraw Reason Modal State
+  const [redrawTargetWinner, setRedrawTargetWinner] = useState<WinnerRecord | null>(null);
+  const [redrawReason, setRedrawReason] = useState<string>('Absent after 3 calls');
+
+  // Shortcuts & Pool Search Modals
+  const [showShortcutsModal, setShowShortcutsModal] = useState<boolean>(false);
+  const [showPoolSearchModal, setShowPoolSearchModal] = useState<boolean>(false);
 
   // 3-Tier Rolling Drum State
   const [drum, setDrum] = useState<DrumRollItem>({
@@ -239,8 +258,17 @@ export const DrawStage: React.FC<DrawStageProps> = ({
     const targetWinner = batchQueue[currentSlotIndex];
     if (!targetWinner) return;
 
+    if (settingsRef.current.voiceAnnounceEnabled) {
+      announceWinnerTTS(targetWinner.participant.name, targetWinner.prize);
+    }
+
     const nextRevealed = [targetWinner, ...revealedInBatch];
     setRevealedInBatch(nextRevealed);
+
+    if (batchQueue.length === 1 || currentSlotIndex === batchQueue.length - 1) {
+      setCelebrationWinner(targetWinner);
+      setShowCelebrationModal(true);
+    }
 
     const dwell = speed === 'fast' ? 400 : speed === 'normal' ? 900 : 1500;
     sequenceTimerRef.current = setTimeout(() => {
@@ -354,8 +382,17 @@ export const DrawStage: React.FC<DrawStageProps> = ({
         }
         fireLightCelebration();
 
+        if (settingsRef.current.voiceAnnounceEnabled) {
+          announceWinnerTTS(targetWinner.participant.name, targetWinner.prize);
+        }
+
         const nextRevealed = [targetWinner, ...alreadyRevealed];
         setRevealedInBatch(nextRevealed);
+
+        if (queue.length === 1 || index === queue.length - 1) {
+          setCelebrationWinner(targetWinner);
+          setShowCelebrationModal(true);
+        }
 
         const dwell = currentSpeed === 'fast' ? 200 : currentSpeed === 'normal' ? 500 : 900;
         sequenceTimerRef.current = setTimeout(() => {
@@ -502,7 +539,15 @@ export const DrawStage: React.FC<DrawStageProps> = ({
   // Spacebar controls
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (showLiveModal) return;
+      if (
+        showLiveModal ||
+        showCelebrationModal ||
+        Boolean(redrawTargetWinner) ||
+        showPoolSearchModal ||
+        showShortcutsModal
+      ) {
+        return;
+      }
       const target = e.target;
       if (
         target instanceof HTMLInputElement ||
@@ -519,6 +564,21 @@ export const DrawStage: React.FC<DrawStageProps> = ({
         } else if (canDraw) {
           handleStartDraw();
         }
+      } else if (e.key === '?' || e.key === '/') {
+        e.preventDefault();
+        setShowShortcutsModal(true);
+      } else if (e.key === 'p' || e.key === 'P') {
+        e.preventDefault();
+        setShowPoolSearchModal(true);
+      } else if (e.key === 'f' || e.key === 'F') {
+        e.preventDefault();
+        setStageFullscreen((v) => !v);
+      } else if (e.key === 'm' || e.key === 'M') {
+        e.preventDefault();
+        onToggleSound();
+      } else if (e.key === 'c' || e.key === 'C') {
+        e.preventDefault();
+        fireGrandCelebration();
       } else if (e.code === 'Escape' && stageFullscreen) {
         setStageFullscreen(false);
       }
@@ -528,6 +588,10 @@ export const DrawStage: React.FC<DrawStageProps> = ({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [
     showLiveModal,
+    showCelebrationModal,
+    redrawTargetWinner,
+    showPoolSearchModal,
+    showShortcutsModal,
     isSequenceActive,
     isPaused,
     canDraw,
@@ -650,6 +714,25 @@ export const DrawStage: React.FC<DrawStageProps> = ({
               aria-hidden="true"
             />
             Confetti
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowPoolSearchModal(true)}
+            aria-label="Check ticket or participant in drum"
+            className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 whitespace-nowrap shrink-0"
+            title="Check if your ticket/name is inside the current draw (P)"
+          >
+            <Ticket className="h-4 w-4 text-emerald-600" aria-hidden="true" />
+            Check My Ticket
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowShortcutsModal(true)}
+            aria-label="Keyboard shortcuts"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 whitespace-nowrap shrink-0"
+            title="Stage keyboard shortcuts (?)"
+          >
+            <HelpCircle className="h-4 w-4" aria-hidden="true" />
           </button>
           <button
             type="button"
@@ -1062,7 +1145,7 @@ export const DrawStage: React.FC<DrawStageProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => onRedrawWinner(latestBatchWinners[0].id)}
+                  onClick={() => setRedrawTargetWinner(latestBatchWinners[0])}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 >
                   <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
@@ -1150,7 +1233,7 @@ export const DrawStage: React.FC<DrawStageProps> = ({
                     </div>
                     <button
                       type="button"
-                      onClick={() => onRedrawWinner(winner.id)}
+                      onClick={() => setRedrawTargetWinner(winner)}
                       aria-label={`Redraw slot ${winner.slotNumber} (${winner.participant.name})`}
                       className="rounded-md px-2 py-1 text-xs font-medium text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors whitespace-nowrap shrink-0"
                     >
@@ -1461,7 +1544,7 @@ export const DrawStage: React.FC<DrawStageProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => onRedrawWinner(winner.id)}
+                  onClick={() => setRedrawTargetWinner(winner)}
                   aria-label={`Redraw slot ${winner.slotNumber} (${winner.participant.name})`}
                   className="rounded-md px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900 whitespace-nowrap shrink-0"
                 >
@@ -1484,6 +1567,124 @@ export const DrawStage: React.FC<DrawStageProps> = ({
         palette={palette}
         onRedrawWinner={onRedrawWinner}
       />
+
+      {/* Winner Celebration Modal (Wheel of Names Signature Feature) */}
+      <WinnerCelebrationModal
+        open={showCelebrationModal}
+        winner={celebrationWinner}
+        onClose={() => setShowCelebrationModal(false)}
+        onDrawNext={canDraw ? handleStartDraw : undefined}
+        onRedraw={(wid) => {
+          setShowCelebrationModal(false);
+          const w = activeWinners.find((item) => item.id === wid);
+          if (w) setRedrawTargetWinner(w);
+        }}
+        palette={palette}
+        hasMoreToDraw={slotsLeft > 0 && pool.length > 0}
+      />
+
+      {/* Audience Pool / Ticket Checker Modal */}
+      <PoolSearchModal
+        open={showPoolSearchModal}
+        onClose={() => setShowPoolSearchModal(false)}
+        pool={pool}
+        roundTitle={activeRound.title}
+      />
+
+      {/* Keyboard Shortcuts Cheat Sheet */}
+      <ShortcutsModal
+        open={showShortcutsModal}
+        onClose={() => setShowShortcutsModal(false)}
+      />
+
+      {/* Redraw Slot with Reason Selection Modal */}
+      {redrawTargetWinner && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+            <h3 className="text-base font-bold text-slate-900">
+              Redraw Slot #{redrawTargetWinner.slotNumber}
+            </h3>
+            <p className="mt-1 text-xs text-slate-500">
+              Current Winner:{' '}
+              <strong className="text-slate-800">{redrawTargetWinner.participant.name}</strong>
+            </p>
+
+            <div className="mt-4">
+              <label htmlFor="redraw-reason-select" className="block text-xs font-semibold text-slate-700 mb-1.5">
+                Audit Reason for Redraw:
+              </label>
+              <select
+                id="redraw-reason-select"
+                value={redrawReason}
+                onChange={(e) => setRedrawReason(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 bg-white p-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-400"
+              >
+                <option value="Absent after 3 calls">Absent after 3 calls</option>
+                <option value="Ineligible / Organizing Committee">Ineligible / Organizing Committee</option>
+                <option value="Declined Prize">Declined Prize</option>
+                <option value="Ticket Verification Failed">Ticket Verification Failed</option>
+                <option value="Other / Re-roll">Other / Re-roll</option>
+              </select>
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setRedrawTargetWinner(null)}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const wid = redrawTargetWinner.id;
+                  const reason = redrawReason;
+                  setRedrawTargetWinner(null);
+                  onRedrawWinner(wid, reason);
+                }}
+                className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-bold text-white hover:bg-rose-700 shadow-xs"
+              >
+                Confirm & Redraw Replacement
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Broadcast Fullscreen Mode (16:9 Projector Mode): Live Recent Winners Ticker */}
+      {stageFullscreen && activeWinners.length > 0 && (
+        <div className="fixed inset-x-0 bottom-0 z-40 bg-slate-900/95 text-white backdrop-blur-md border-t border-slate-800 px-6 py-2.5 flex items-center justify-between text-xs shadow-2xl">
+          <div className="flex items-center gap-2 font-mono font-bold text-amber-400 shrink-0">
+            <Trophy className="h-4 w-4 text-amber-400 animate-pulse" />
+            <span>RECENT WINNERS:</span>
+          </div>
+          <div className="flex-1 overflow-x-auto whitespace-nowrap px-4 flex items-center gap-6 text-slate-300 font-medium scrollbar-none">
+            {activeWinners.slice(-10).reverse().map((w) => (
+              <span key={w.id} className="inline-flex items-center gap-1.5">
+                <span className="font-mono text-xs font-bold text-amber-400 bg-slate-800 px-1.5 py-0.5 rounded">
+                  #{w.slotNumber}
+                </span>
+                <strong className="text-white font-bold">{w.participant.name}</strong>
+                {w.participant.department && (
+                  <span className="text-slate-400 text-[11px]">({w.participant.department})</span>
+                )}
+              </span>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => setStageFullscreen(false)}
+            className="text-[11px] font-mono text-slate-400 hover:text-white shrink-0 ml-3 bg-slate-800 px-2 py-1 rounded"
+          >
+            [Esc to Exit]
+          </button>
+        </div>
+      )}
     </section>
   );
 };

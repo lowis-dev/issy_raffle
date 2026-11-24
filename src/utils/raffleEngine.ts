@@ -232,6 +232,7 @@ export function redrawSingleWinner(params: {
   removeAllEntriesByName: boolean;
   nowIso?: string;
   rng?: () => number;
+  voidReason?: string;
 }): RedrawResult {
   const {
     winnerId,
@@ -241,6 +242,7 @@ export function redrawSingleWinner(params: {
     removeAllEntriesByName,
     nowIso = new Date().toISOString(),
     rng,
+    voidReason = 'Absent / Redrawn',
   } = params;
 
   const target = winners.find((w) => w.id === winnerId && w.status === 'active');
@@ -294,7 +296,7 @@ export function redrawSingleWinner(params: {
 
   const updatedWinners = winners.map((w) =>
     w.id === winnerId
-      ? { ...w, status: 'voided' as const, replacedByWinnerId: replacementId }
+      ? { ...w, status: 'voided' as const, replacedByWinnerId: replacementId, voidReason }
       : w
   );
   updatedWinners.push(replacementWinner);
@@ -605,6 +607,7 @@ export function exportWinnersToCsv(
     'Department / Branch',
     'Contact',
     'Status',
+    'Void Reason',
     'Claimed',
     'Drawn Timestamp',
   ];
@@ -627,6 +630,7 @@ export function exportWinnersToCsv(
         w.participant.department ?? '',
         w.participant.contact ?? '',
         w.status === 'active' ? 'Winner' : 'Voided / Redrawn',
+        w.status === 'voided' ? w.voidReason ?? 'Redrawn' : '',
         w.claimed ? 'Yes' : 'No',
         w.drawnAt,
       ]

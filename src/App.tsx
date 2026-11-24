@@ -288,7 +288,7 @@ export default function App() {
     return result.newWinners;
   };
 
-  const performRedraw = (winnerId: string) => {
+  const performRedraw = (winnerId: string, reason?: string) => {
     const winner = winners.find((w) => w.id === winnerId);
     const round = rounds.find((r) => r.id === winner?.roundId) ?? activeRound;
     const isBonus = Boolean(round.isBonusRound);
@@ -307,6 +307,7 @@ export default function App() {
       pool: poolToUse,
       removeWinnerFromPool: settings.removeWinnerFromPool,
       removeAllEntriesByName: settings.removeAllEntriesByName,
+      voidReason: reason || 'Absent / Redrawn',
     });
 
     if (!res.replacementWinner) return;
@@ -326,8 +327,50 @@ export default function App() {
       prev.map((w) => (w.id === winnerId ? res.replacementWinner! : w))
     );
     showToast(
-      `Slot #${res.replacementWinner.slotNumber} redrawn: ${res.replacementWinner.participant.name}`
+      `Slot #${res.replacementWinner.slotNumber} redrawn: ${res.replacementWinner.participant.name} (${reason || 'Absent'})`
     );
+  };
+
+  const handleExportBackup = () => {
+    const backupData = {
+      version: '1.0',
+      exportedAt: new Date().toISOString(),
+      originalPool,
+      pool,
+      rounds,
+      winners,
+      settings,
+      dataSource,
+    };
+    const blob = new Blob([JSON.stringify(backupData, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `raffle-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Event backup downloaded successfully.');
+  };
+
+  const handleImportBackup = (jsonText: string) => {
+    try {
+      const data = JSON.parse(jsonText);
+      if (!data.rounds || !data.pool || !data.settings) {
+        throw new Error('Invalid backup format');
+      }
+      setOriginalPool(data.originalPool || data.pool);
+      setPool(data.pool);
+      setRounds(data.rounds);
+      setWinners(data.winners || []);
+      setSettings(data.settings);
+      if (data.dataSource) setDataSource(data.dataSource);
+      if (data.rounds.length > 0) setActiveRoundId(data.rounds[0].id);
+      showToast('Event restored from backup successfully.');
+    } catch {
+      showToast('Failed to restore backup: Invalid file format.');
+    }
   };
 
   const requestRedrawConfirmation = (winner: WinnerRecord) => {
@@ -713,6 +756,8 @@ export default function App() {
               onDeleteRound={handleDeleteRound}
               onRestoreDefaultSequence={handleRestoreDefaultSequence}
               onOpenBonusModal={() => handleOpenBonusModal()}
+              onExportBackup={handleExportBackup}
+              onImportBackup={handleImportBackup}
             />
           )}
         </main>

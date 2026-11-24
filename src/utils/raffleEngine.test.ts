@@ -288,3 +288,35 @@ test('bonus round draws from its dedicated participant pool without mutating the
   // Verify the main pool was completely untouched and unaffected
   assert.equal(mainPool.length, 10);
 });
+
+test('redrawSingleWinner captures voidReason and exports it cleanly to CSV', () => {
+  const pool = createDemoParticipants(3);
+  const draw = drawWinnersFromPool({
+    pool,
+    round: DEFAULT_ROUNDS[0],
+    existingRoundWinners: [],
+    requestedCount: 1,
+    removeWinnerFromPool: true,
+    removeAllEntriesByName: false,
+    rng: () => 0,
+  });
+
+  const winner = draw.newWinners[0];
+  const redraw = redrawSingleWinner({
+    winnerId: winner.id,
+    winners: draw.newWinners,
+    pool: draw.remainingPool,
+    removeWinnerFromPool: true,
+    removeAllEntriesByName: false,
+    voidReason: 'Absent after 3 calls',
+    rng: () => 0,
+  });
+
+  const voided = redraw.updatedWinners.find((w) => w.id === winner.id);
+  assert.equal(voided?.status, 'voided');
+  assert.equal(voided?.voidReason, 'Absent after 3 calls');
+
+  const csv = exportWinnersToCsv(redraw.updatedWinners, DEFAULT_ROUNDS);
+  assert.ok(csv.includes('Void Reason'));
+  assert.ok(csv.includes('Absent after 3 calls'));
+});

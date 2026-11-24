@@ -5,6 +5,7 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  Dices,
   FastForward,
   Gift,
   Maximize2,
@@ -12,6 +13,7 @@ import {
   Pause,
   Play,
   RotateCcw,
+  Shuffle,
   Sparkles,
   Trophy,
   Users,
@@ -19,7 +21,7 @@ import {
   VolumeX,
 } from 'lucide-react';
 import type { Participant, RaffleRound, RaffleSettings, WinnerRecord } from '../types/raffle';
-import { secureRandomInt } from '../utils/raffleEngine';
+import { secureRandomInt, secureShuffle } from '../utils/raffleEngine';
 import { playTickSound, playWinFanfare } from '../utils/sound';
 import type { ThemePalette } from '../utils/theme';
 import { LiveDrawModal } from './LiveDrawModal';
@@ -43,11 +45,13 @@ interface DrawStageProps {
 
 type RevealSpeed = 'fast' | 'normal' | 'dramatic';
 
-const SPEED_CONFIG: Record<RevealSpeed, { label: string; spinDuration: number; dwellDuration: number }> = {
-  fast: { label: 'Fast (0.3s)', spinDuration: 160, dwellDuration: 140 },
-  normal: { label: 'Normal (0.8s)', spinDuration: 450, dwellDuration: 350 },
-  dramatic: { label: 'Dramatic (1.6s)', spinDuration: 950, dwellDuration: 650 },
-};
+interface DrumRollItem {
+  prev: Participant | null;
+  curr: Participant | null;
+  next: Participant | null;
+  step: number;
+  total: number;
+}
 
 export const DrawStage: React.FC<DrawStageProps> = ({
   activeRound,
@@ -78,27 +82,47 @@ export const DrawStage: React.FC<DrawStageProps> = ({
   const [isExpanded, setIsExpanded] = useState(false);
   const [isBottomExpanded, setIsBottomExpanded] = useState(false);
 
+  // Spin Fairness & Order Settings (User configurable: 1-to-last & randomize)
+  const [randomizeSpinOrder, setRandomizeSpinOrder] = useState<boolean>(true);
+  const [sweepAllNames, setSweepAllNames] = useState<boolean>(true);
+  const [speed, setSpeed] = useState<RevealSpeed>('normal');
+
   // Sequential Reveal State
   const [isSequenceActive, setIsSequenceActive] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
-  const [speed, setSpeed] = useState<RevealSpeed>('normal');
   const [batchQueue, setBatchQueue] = useState<WinnerRecord[]>([]);
   const [revealedInBatch, setRevealedInBatch] = useState<WinnerRecord[]>([]);
   const [currentSlotIndex, setCurrentSlotIndex] = useState<number>(0);
   const [activeSlotSpinning, setActiveSlotSpinning] = useState(false);
-  const [slotPreviewParticipant, setSlotPreviewParticipant] = useState<Participant | null>(null);
+
+  // Audience Preview Drum Roll State
+  const [isPreviewRolling, setIsPreviewRolling] = useState(false);
+  const [previewCompleteMessage, setPreviewCompleteMessage] = useState<string | null>(null);
+
+  // 3-Tier Rolling Drum State
+  const [drum, setDrum] = useState<DrumRollItem>({
+    prev: null,
+    curr: null,
+    next: null,
+    step: 0,
+    total: 0,
+  });
 
   const sequenceTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const spinIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const stepTimerRef = useRef<NodeJS.Timeout | null>(null);
   const onExecuteDrawRef = useRef(onExecuteDraw);
   const settingsRef = useRef(settings);
   const speedRef = useRef(speed);
   const isPausedRef = useRef(isPaused);
+  const randomizeOrderRef = useRef(randomizeSpinOrder);
+  const sweepAllRef = useRef(sweepAllNames);
 
   onExecuteDrawRef.current = onExecuteDraw;
   settingsRef.current = settings;
   speedRef.current = speed;
   isPausedRef.current = isPaused;
+  randomizeOrderRef.current = randomizeSpinOrder;
+  sweepAllRef.current = sweepAllNames;
 
   // Cleanup on unmount or round change
   const clearSequenceTimers = () => {
@@ -106,9 +130,9 @@ export const DrawStage: React.FC<DrawStageProps> = ({
       clearTimeout(sequenceTimerRef.current);
       sequenceTimerRef.current = null;
     }
-    if (spinIntervalRef.current) {
-      clearInterval(spinIntervalRef.current);
-      spinIntervalRef.current = null;
+    if (stepTimerRef.current) {
+      clearTimeout(stepTimerRef.current);
+      stepTimerRef.current = null;
     }
   };
 
@@ -120,6 +144,8 @@ export const DrawStage: React.FC<DrawStageProps> = ({
     clearSequenceTimers();
     setIsSequenceActive(false);
     setIsPaused(false);
+    setIsPreviewRolling(false);
+    setPreviewCompleteMessage(null);
   }, [activeRound.id]);
 
   // Sync batch size cleanly when switching rounds or resetting draws
@@ -133,8 +159,24 @@ export const DrawStage: React.FC<DrawStageProps> = ({
     }
   }, [maxDrawable, batchSize]);
 
+  // Initialize Drum when pool changes or idle
+  useEffect(() => {
+    if (pool.length > 0 && !isSequenceActive && !isPreviewRolling) {
+      const idx0 = 0;
+      const idx1 = pool.length > 1 ? 1 : 0;
+      const idxLast = pool.length - 1;
+      setDrum({
+        prev: pool[idxLast],
+        curr: pool[idx0],
+        next: pool[idx1],
+        step: 1,
+        total: pool.length,
+      });
+    }
+  }, [pool, isSequenceActive, isPreviewRolling]);
+
   const effectiveDrawCount = Math.min(batchSize, maxDrawable);
-  const canDraw = !isSequenceActive && effectiveDrawCount > 0;
+  const canDraw = !isSequenceActive && !isPreviewRolling && effectiveDrawCount > 0;
 
   const fireLightCelebration = () => {
     if (!settingsRef.current.confettiEnabled) return;
@@ -172,7 +214,7 @@ export const DrawStage: React.FC<DrawStageProps> = ({
     }
   };
 
-  // Step runner for progressive one-by-one reveals
+  // Step runner for progressive one-by-one reveals sweeping from 1 to last
   const runNextRevealStep = (
     queue: WinnerRecord[],
     index: number,
@@ -199,52 +241,156 @@ export const DrawStage: React.FC<DrawStageProps> = ({
 
     const targetWinner = queue[index];
     const currentSpeed = speedRef.current;
-    const { spinDuration, dwellDuration } = SPEED_CONFIG[currentSpeed];
+    const shouldRandomize = randomizeOrderRef.current;
+    const shouldSweepAll = sweepAllRef.current;
 
-    // Rapid shuffle for the current active slot
-    if (pool.length > 0) {
-      spinIntervalRef.current = setInterval(() => {
-        const randIdx = secureRandomInt(pool.length);
-        setSlotPreviewParticipant(pool[randIdx]);
-        if (settingsRef.current.soundEnabled) {
-          playTickSound(0.5);
-        }
-      }, Math.max(35, Math.floor(spinDuration / 6)));
+    // Build the candidate spin stream that passes from 1 to last
+    let candidateList: Participant[] = shouldRandomize
+      ? secureShuffle(pool)
+      : [...pool];
+
+    if (candidateList.length === 0) {
+      candidateList = [targetWinner.participant];
     }
 
-    // After spinDuration, reveal the true winner for this slot
-    sequenceTimerRef.current = setTimeout(() => {
-      if (spinIntervalRef.current) {
-        clearInterval(spinIntervalRef.current);
-        spinIntervalRef.current = null;
-      }
+    // Determine candidate roll sequence
+    let sweepSequence: Participant[];
+    if (shouldSweepAll || pool.length <= 35) {
+      // Complete sweep: all names in pool pass through so everyone is seen ("makita muna para fair")
+      sweepSequence = [...candidateList];
+    } else {
+      // Quick sweep for very large multi-winner draws
+      sweepSequence = candidateList.slice(0, Math.min(25, candidateList.length));
+    }
 
-      // Lock on actual target winner
-      setSlotPreviewParticipant(targetWinner.participant);
-      setActiveSlotSpinning(false);
+    // Ensure the sweep concludes cleanly and precisely on the chosen target winner
+    const withoutTarget = sweepSequence.filter((p) => p.id !== targetWinner.participant.id);
+    const finalRollSequence = [...withoutTarget, targetWinner.participant];
+    const totalSteps = finalRollSequence.length;
+
+    let stepIdx = 0;
+
+    const executeRollStep = () => {
+      if (isPausedRef.current) return;
+
+      const curr = finalRollSequence[stepIdx];
+      const prev =
+        stepIdx > 0
+          ? finalRollSequence[stepIdx - 1]
+          : finalRollSequence[finalRollSequence.length - 1];
+      const next =
+        stepIdx < finalRollSequence.length - 1
+          ? finalRollSequence[stepIdx + 1]
+          : finalRollSequence[0];
+
+      setDrum({
+        prev,
+        curr,
+        next,
+        step: stepIdx + 1,
+        total: totalSteps,
+      });
 
       if (settingsRef.current.soundEnabled) {
-        playTickSound(0.9);
+        playTickSound((stepIdx + 1) / totalSteps);
       }
-      fireLightCelebration();
 
-      const nextRevealed = [targetWinner, ...alreadyRevealed];
-      setRevealedInBatch(nextRevealed);
+      stepIdx++;
 
-      // Dwell briefly so spectators can read the name, then step to next
-      sequenceTimerRef.current = setTimeout(() => {
-        runNextRevealStep(queue, index + 1, nextRevealed);
-      }, dwellDuration);
-    }, spinDuration);
+      if (stepIdx < totalSteps) {
+        const remaining = totalSteps - stepIdx;
+        let delay: number;
+
+        // Base velocity
+        const baseInterval = currentSpeed === 'fast' ? 16 : currentSpeed === 'normal' ? 32 : 55;
+
+        if (remaining > 8) {
+          // Rapid cruising speed: names stream past
+          delay = baseInterval;
+        } else {
+          // Deceleration curve: tension builds as it slows down to land on the winner
+          const slowdownFactor = Math.pow((9 - remaining) / 8, 2.2);
+          delay = baseInterval + slowdownFactor * (currentSpeed === 'dramatic' ? 480 : 280);
+        }
+
+        stepTimerRef.current = setTimeout(executeRollStep, delay);
+      } else {
+        // Landed squarely on the target winner!
+        setActiveSlotSpinning(false);
+        if (settingsRef.current.soundEnabled) {
+          playTickSound(1.0);
+        }
+        fireLightCelebration();
+
+        const nextRevealed = [targetWinner, ...alreadyRevealed];
+        setRevealedInBatch(nextRevealed);
+
+        const dwell = currentSpeed === 'fast' ? 160 : currentSpeed === 'normal' ? 400 : 750;
+        sequenceTimerRef.current = setTimeout(() => {
+          runNextRevealStep(queue, index + 1, nextRevealed);
+        }, dwell);
+      }
+    };
+
+    executeRollStep();
   };
 
-  // Start the draw sequence
+  // Audience Preview Drum Roll (Shows all names rolling from 1 to last without picking a winner)
+  const handleStartDrumPreview = () => {
+    if (pool.length === 0 || isSequenceActive || isPreviewRolling) return;
+
+    clearSequenceTimers();
+    setIsPreviewRolling(true);
+    setPreviewCompleteMessage(null);
+
+    const shouldRandomize = randomizeOrderRef.current;
+    const previewList = shouldRandomize ? secureShuffle(pool) : [...pool];
+    const totalSteps = previewList.length;
+    let stepIdx = 0;
+
+    const runPreviewStep = () => {
+      const curr = previewList[stepIdx];
+      const prev =
+        stepIdx > 0 ? previewList[stepIdx - 1] : previewList[previewList.length - 1];
+      const next =
+        stepIdx < previewList.length - 1 ? previewList[stepIdx + 1] : previewList[0];
+
+      setDrum({
+        prev,
+        curr,
+        next,
+        step: stepIdx + 1,
+        total: totalSteps,
+      });
+
+      if (settingsRef.current.soundEnabled) {
+        playTickSound((stepIdx + 1) / totalSteps);
+      }
+
+      stepIdx++;
+
+      if (stepIdx < totalSteps) {
+        // Fast sweep (~20ms per name)
+        stepTimerRef.current = setTimeout(runPreviewStep, 22);
+      } else {
+        setIsPreviewRolling(false);
+        setPreviewCompleteMessage(
+          `Fairness Check Complete: All ${totalSteps} entries verified in drum!`
+        );
+        setTimeout(() => setPreviewCompleteMessage(null), 5000);
+      }
+    };
+
+    runPreviewStep();
+  };
+
+  // Start the official draw sequence
   const handleStartDraw = () => {
     if (!canDraw) return;
 
     clearSequenceTimers();
+    setPreviewCompleteMessage(null);
 
-    // Cryptographically draw the requested winners
     const drawCount = effectiveDrawCount;
     const newlyDrawn = onExecuteDrawRef.current(drawCount);
 
@@ -264,13 +410,11 @@ export const DrawStage: React.FC<DrawStageProps> = ({
     if (!isSequenceActive) return;
 
     if (!isPaused) {
-      // Pause
       clearSequenceTimers();
       setIsPaused(true);
       isPausedRef.current = true;
       setActiveSlotSpinning(false);
     } else {
-      // Resume
       setIsPaused(false);
       isPausedRef.current = false;
       runNextRevealStep(batchQueue, currentSlotIndex, revealedInBatch);
@@ -286,7 +430,16 @@ export const DrawStage: React.FC<DrawStageProps> = ({
     setIsPaused(false);
     setRevealedInBatch(batchQueue);
     setCurrentSlotIndex(batchQueue.length - 1);
-    setSlotPreviewParticipant(batchQueue[batchQueue.length - 1]?.participant ?? null);
+    const lastWinner = batchQueue[batchQueue.length - 1];
+    if (lastWinner) {
+      setDrum({
+        prev: pool[0] ?? null,
+        curr: lastWinner.participant,
+        next: pool[1] ?? null,
+        step: batchQueue.length,
+        total: batchQueue.length,
+      });
+    }
     if (settingsRef.current.soundEnabled) {
       playWinFanfare();
     }
@@ -320,7 +473,16 @@ export const DrawStage: React.FC<DrawStageProps> = ({
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [showLiveModal, isSequenceActive, isPaused, canDraw, stageFullscreen, batchQueue, currentSlotIndex, revealedInBatch]);
+  }, [
+    showLiveModal,
+    isSequenceActive,
+    isPaused,
+    canDraw,
+    stageFullscreen,
+    batchQueue,
+    currentSlotIndex,
+    revealedInBatch,
+  ]);
 
   const batchChoices = useMemo(() => {
     const presets = [1, 5, 10, 25, 50];
@@ -497,7 +659,7 @@ export const DrawStage: React.FC<DrawStageProps> = ({
               {roundCompleted ? 'Done' : `${effectiveDrawCount} ${effectiveDrawCount === 1 ? 'Winner' : 'Winners'}`}
             </p>
             <p className="mt-0.5 text-xs text-slate-500">
-              One-by-one progressive reveal
+              {sweepAllNames ? '1-to-last drum sweep' : 'Quick pulse reveal'}
             </p>
           </div>
         </div>
@@ -505,64 +667,86 @@ export const DrawStage: React.FC<DrawStageProps> = ({
         {/* Center Reel / Live Stage Viewport */}
         <div
           data-testid="draw-reel-area"
-          className="mt-5 flex min-h-[260px] flex-col items-center justify-center rounded-xl border border-slate-200 bg-slate-50/80 p-5 sm:p-7 text-center relative overflow-hidden"
+          className="mt-5 flex min-h-[300px] flex-col items-center justify-center rounded-xl border border-slate-200 bg-slate-50/80 p-5 sm:p-7 text-center relative overflow-hidden"
         >
-          {/* ACTIVE SEQUENTIAL ONE-BY-ONE LIVE DRAW VIEW */}
-          {isSequenceActive ? (
-            <div className="w-full max-w-2xl space-y-5" aria-live="polite">
+          {/* PREVIEW MESSAGE BANNER */}
+          {previewCompleteMessage && (
+            <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-emerald-100 px-4 py-1.5 text-xs font-bold text-emerald-800 shadow-xs animate-bounce">
+              <Check className="h-4 w-4" />
+              {previewCompleteMessage}
+            </div>
+          )}
+
+          {/* ACTIVE SEQUENTIAL OR AUDIENCE PREVIEW LIVE DRAW VIEW */}
+          {isSequenceActive || isPreviewRolling ? (
+            <div className="w-full max-w-2xl space-y-4" aria-live="polite">
               {/* Progress & Live Status Banner */}
               <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
                 <div className="flex items-center gap-2">
-                  <span className={`h-2.5 w-2.5 rounded-full ${isPaused ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'}`} />
+                  <span
+                    className={`h-2.5 w-2.5 rounded-full ${
+                      isPaused ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'
+                    }`}
+                  />
                   <span className="font-bold text-slate-900">
-                    {isPaused
+                    {isPreviewRolling
+                      ? `Audience Fairness Check · Rolling entry ${drum.step} of ${drum.total}...`
+                      : isPaused
                       ? 'Live Draw Paused'
-                      : `Revealing Winner ${currentSlotIndex + 1} of ${batchQueue.length}...`}
+                      : `Drawing Winner ${currentSlotIndex + 1} of ${batchQueue.length}...`}
                   </span>
                 </div>
 
-                {/* Live Controls: Speed & Skip */}
-                <div className="flex items-center gap-2">
-                  {/* Speed Selector */}
-                  <div className="flex items-center rounded-md bg-slate-200/80 p-0.5 text-[11px] font-semibold">
-                    {(['fast', 'normal', 'dramatic'] as RevealSpeed[]).map((sp) => (
-                      <button
-                        key={sp}
-                        type="button"
-                        onClick={() => {
-                          setSpeed(sp);
-                          speedRef.current = sp;
-                        }}
-                        className={`rounded px-2 py-0.5 capitalize transition-colors ${
-                          speed === sp ? 'bg-white text-slate-950 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                        }`}
-                      >
-                        {sp}
-                      </button>
-                    ))}
+                {/* Live Controls */}
+                {!isPreviewRolling && (
+                  <div className="flex items-center gap-2">
+                    {/* Speed Selector */}
+                    <div className="flex items-center rounded-md bg-slate-200/80 p-0.5 text-[11px] font-semibold">
+                      {(['fast', 'normal', 'dramatic'] as RevealSpeed[]).map((sp) => (
+                        <button
+                          key={sp}
+                          type="button"
+                          onClick={() => {
+                            setSpeed(sp);
+                            speedRef.current = sp;
+                          }}
+                          className={`rounded px-2 py-0.5 capitalize transition-colors ${
+                            speed === sp
+                              ? 'bg-white text-slate-950 shadow-xs'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          {sp}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Pause / Resume Button */}
+                    <button
+                      type="button"
+                      onClick={togglePauseSequence}
+                      className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                    >
+                      {isPaused ? (
+                        <Play className="h-3 w-3 fill-current" />
+                      ) : (
+                        <Pause className="h-3 w-3 fill-current" />
+                      )}
+                      {isPaused ? 'Resume' : 'Pause'}
+                    </button>
+
+                    {/* Skip to End */}
+                    <button
+                      type="button"
+                      onClick={handleRevealAllRemaining}
+                      title="Reveal all remaining winners now"
+                      className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                    >
+                      <FastForward className="h-3 w-3" />
+                      Reveal All
+                    </button>
                   </div>
-
-                  {/* Pause / Resume Button */}
-                  <button
-                    type="button"
-                    onClick={togglePauseSequence}
-                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
-                  >
-                    {isPaused ? <Play className="h-3 w-3 fill-current" /> : <Pause className="h-3 w-3 fill-current" />}
-                    {isPaused ? 'Resume' : 'Pause'}
-                  </button>
-
-                  {/* Skip to End */}
-                  <button
-                    type="button"
-                    onClick={handleRevealAllRemaining}
-                    title="Reveal all remaining winners now"
-                    className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
-                  >
-                    <FastForward className="h-3 w-3" />
-                    Reveal All
-                  </button>
-                </div>
+                )}
               </div>
 
               {/* Progress Bar */}
@@ -570,45 +754,77 @@ export const DrawStage: React.FC<DrawStageProps> = ({
                 <div
                   className={`h-full transition-all duration-200 ${palette.primaryBg}`}
                   style={{
-                    width: `${Math.round(((currentSlotIndex + (activeSlotSpinning ? 0.3 : 1)) / batchQueue.length) * 100)}%`,
+                    width: isPreviewRolling
+                      ? `${Math.round((drum.step / Math.max(1, drum.total)) * 100)}%`
+                      : `${Math.round(
+                          ((currentSlotIndex + (activeSlotSpinning ? drum.step / Math.max(1, drum.total) : 1)) /
+                            batchQueue.length) *
+                            100
+                        )}%`,
                   }}
                 />
               </div>
 
-              {/* Hero Spotlight Reel Card for the Active Slot */}
-              <div
-                className={`relative rounded-2xl border p-6 sm:p-8 transition-all duration-150 ${
-                  activeSlotSpinning
-                    ? 'border-emerald-300 bg-white shadow-lg ring-4 ring-emerald-500/10'
-                    : 'border-slate-200 bg-gradient-to-b from-white to-slate-50/90 shadow-md'
-                }`}
-              >
-                <div className="flex items-center justify-center gap-2">
-                  <span className="font-mono text-xs font-bold uppercase tracking-wider text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded-full">
-                    Slot #{currentSlotWinner ? String(currentSlotWinner.slotNumber).padStart(3, '0') : '...'}
-                  </span>
-                  <span className="text-xs text-slate-400">
-                    ({currentSlotIndex + 1} of {batchQueue.length})
-                  </span>
+              {/* 3-Tier Moving Slot Drum with Vignettes */}
+              <div className="relative w-full overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-100/70 via-white to-slate-100/70 p-3 shadow-inner">
+                {/* Drum Depth Vignettes */}
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-10 bg-gradient-to-b from-slate-100 to-transparent z-10" />
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-slate-100 to-transparent z-10" />
+
+                {/* Previous Item (Rolling above) */}
+                <div className="h-9 flex items-center justify-center opacity-30 scale-95 transition-all">
+                  <p className="font-display text-base text-slate-600 truncate">
+                    {drum.prev?.name || '...'}
+                  </p>
                 </div>
 
-                <p
-                  className={`mt-3 font-display font-black tracking-tight text-slate-950 transition-all ${
-                    activeSlotSpinning ? 'text-3xl sm:text-4xl opacity-85 scale-[0.98]' : 'text-3xl sm:text-5xl scale-100'
+                {/* Center Spotlight Card (Active Winner or Cycling Entry) */}
+                <div
+                  className={`my-1.5 rounded-xl border p-4 sm:p-5 transition-all duration-100 shadow-sm ${
+                    activeSlotSpinning || isPreviewRolling
+                      ? 'border-emerald-400 bg-white ring-4 ring-emerald-500/15 scale-100'
+                      : 'border-slate-300 bg-white scale-[1.02]'
                   }`}
                 >
-                  {slotPreviewParticipant?.name || 'Randomizing...'}
-                </p>
-
-                <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-xs sm:text-sm text-slate-500">
-                  {settings.showTicketNumber && slotPreviewParticipant?.ticketNumber && (
-                    <span className="font-mono font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
-                      {slotPreviewParticipant.ticketNumber}
+                  <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
+                    <span className="font-mono font-bold text-slate-700 bg-slate-100 px-2.5 py-0.5 rounded-full">
+                      {isPreviewRolling
+                        ? 'Audience Fairness Check'
+                        : `Slot #${
+                            currentSlotWinner
+                              ? String(currentSlotWinner.slotNumber).padStart(3, '0')
+                              : '...'
+                          }`}
                     </span>
-                  )}
-                  {settings.showDepartment && slotPreviewParticipant?.department && (
-                    <span>{slotPreviewParticipant.department}</span>
-                  )}
+                    {(activeSlotSpinning || isPreviewRolling) && drum.total > 0 && (
+                      <span className="font-mono text-emerald-600 font-bold animate-pulse">
+                        Entry {drum.step} / {drum.total} ·{' '}
+                        {randomizeSpinOrder ? 'Shuffled' : '1-to-Last'}
+                      </span>
+                    )}
+                  </div>
+
+                  <p className="font-display text-2xl sm:text-4xl lg:text-5xl font-black tracking-tight text-slate-950 truncate">
+                    {drum.curr?.name || 'Ready to Spin'}
+                  </p>
+
+                  <div className="mt-1 flex flex-wrap items-center justify-center gap-2 text-xs sm:text-sm text-slate-500">
+                    {settings.showTicketNumber && drum.curr?.ticketNumber && (
+                      <span className="font-mono font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
+                        {drum.curr.ticketNumber}
+                      </span>
+                    )}
+                    {settings.showDepartment && drum.curr?.department && (
+                      <span>{drum.curr.department}</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Next Item (Rolling below) */}
+                <div className="h-9 flex items-center justify-center opacity-30 scale-95 transition-all">
+                  <p className="font-display text-base text-slate-600 truncate">
+                    {drum.next?.name || '...'}
+                  </p>
                 </div>
               </div>
 
@@ -626,16 +842,22 @@ export const DrawStage: React.FC<DrawStageProps> = ({
                       <div
                         key={w.id}
                         className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left bg-white transition-all ${
-                          i === 0 ? 'border-emerald-300 ring-2 ring-emerald-400/20 shadow-xs' : 'border-slate-200'
+                          i === 0
+                            ? 'border-emerald-300 ring-2 ring-emerald-400/20 shadow-xs'
+                            : 'border-slate-200'
                         }`}
                       >
                         <span className="font-mono text-[11px] font-bold text-slate-400">
                           #{String(w.slotNumber).padStart(3, '0')}
                         </span>
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-xs font-bold text-slate-900">{w.participant.name}</p>
+                          <p className="truncate text-xs font-bold text-slate-900">
+                            {w.participant.name}
+                          </p>
                           <p className="truncate text-[10px] text-slate-400">
-                            {[w.participant.ticketNumber, w.participant.department].filter(Boolean).join(' · ')}
+                            {[w.participant.ticketNumber, w.participant.department]
+                              .filter(Boolean)
+                              .join(' · ')}
                           </p>
                         </div>
                       </div>
@@ -689,7 +911,9 @@ export const DrawStage: React.FC<DrawStageProps> = ({
                 <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-700">
                   <Gift className="h-6 w-6" aria-hidden="true" />
                 </div>
-                <h2 className="mt-3 text-lg font-bold text-slate-900">No Participants Entered Yet</h2>
+                <h2 className="mt-3 text-lg font-bold text-slate-900">
+                  No Participants Entered Yet
+                </h2>
                 <p className="mt-1 text-xs text-slate-500">
                   This Bonus Round uses its own participant list. Input or paste names to begin the draw.
                 </p>
@@ -848,29 +1072,136 @@ export const DrawStage: React.FC<DrawStageProps> = ({
               </div>
             </div>
           ) : (
-            <div className="max-w-lg py-4">
-              <p className="text-xs font-medium text-slate-500">
-                Ready for Round {activeRound.order} · {activeRound.prize}
-              </p>
-              <h2 className="mt-2 text-2xl font-bold text-slate-950">
-                Draw {effectiveDrawCount}{' '}
-                {effectiveDrawCount === 1 ? 'Winner' : 'Winners'} from{' '}
-                {pool.length.toLocaleString()} Entries
-              </h2>
-              <p className="mt-1.5 text-sm text-slate-600">
-                Select how many winners to pick per spin below, then press Start Draw to watch them reveal one by one.
-                {stageFullscreen ? ' Tip: press Spacebar on stage to trigger or pause the draw.' : ''}
-              </p>
+            <div className="w-full max-w-xl py-4 space-y-4">
+              {/* Ready Drum Window */}
+              <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-100/70 via-white to-slate-100/70 p-4 shadow-sm">
+                <div className="pointer-events-none absolute inset-x-0 top-0 h-8 bg-gradient-to-b from-slate-100 to-transparent z-10" />
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-slate-100 to-transparent z-10" />
+
+                <div className="h-8 flex items-center justify-center opacity-30 scale-95">
+                  <p className="font-display text-sm text-slate-500 truncate">
+                    {drum.prev?.name || '...'}
+                  </p>
+                </div>
+
+                <div className="my-1 rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
+                  <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
+                    <span className="font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
+                      Ready to Draw
+                    </span>
+                    <span className="font-mono text-xs font-semibold text-slate-500">
+                      {pool.length.toLocaleString()} Entries in Drum
+                    </span>
+                  </div>
+                  <h2 className="mt-1 text-2xl sm:text-3xl font-extrabold text-slate-950">
+                    Draw {effectiveDrawCount}{' '}
+                    {effectiveDrawCount === 1 ? 'Winner' : 'Winners'}
+                  </h2>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {sweepAllNames
+                      ? 'The drum will sweep through names from 1 to last before landing on the winner.'
+                      : 'Fast pulse random selection.'}
+                  </p>
+                </div>
+
+                <div className="h-8 flex items-center justify-center opacity-30 scale-95">
+                  <p className="font-display text-sm text-slate-500 truncate">
+                    {drum.next?.name || '...'}
+                  </p>
+                </div>
+              </div>
             </div>
           )}
         </div>
 
         {/* Draw Controls Bar */}
         {!roundCompleted && pool.length > 0 && !isSequenceActive && (
-          <div className="mt-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-wrap items-center gap-3">
+          <div className="mt-6 flex flex-col gap-4 border-t border-slate-100 pt-5">
+            {/* Top Row: Fairness & Drum Controls */}
+            <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="mr-1 text-xs font-medium text-slate-500">Pick per draw:</span>
+                <span className="font-bold text-slate-700">Drum Spin Settings:</span>
+
+                {/* Sweep All / 1-to-Last Toggle */}
+                <button
+                  type="button"
+                  onClick={() => setSweepAllNames((v) => !v)}
+                  className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-semibold transition-all ${
+                    sweepAllNames
+                      ? 'border-emerald-300 bg-emerald-50 text-emerald-800 shadow-2xs'
+                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                  }`}
+                  title={
+                    sweepAllNames
+                      ? 'Cycles through all names from 1 to last so everyone is seen'
+                      : 'Quick spin subset'
+                  }
+                >
+                  <RotateCcw className="h-3.5 w-3.5 text-emerald-600" />
+                  {sweepAllNames ? '1 to Last (All Names)' : 'Quick Reel'}
+                </button>
+
+                {/* Randomize / Sequential Order Toggle */}
+                <button
+                  type="button"
+                  onClick={() => setRandomizeSpinOrder((v) => !v)}
+                  className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-semibold transition-all ${
+                    randomizeSpinOrder
+                      ? 'border-indigo-300 bg-indigo-50 text-indigo-800 shadow-2xs'
+                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                  }`}
+                  title={
+                    randomizeSpinOrder
+                      ? 'Names are shuffled randomly during the sweep'
+                      : 'Names pass in sequential entry order (1 to last)'
+                  }
+                >
+                  <Shuffle className="h-3.5 w-3.5 text-indigo-600" />
+                  {randomizeSpinOrder ? 'Order: Randomized' : 'Order: 1 to Last'}
+                </button>
+
+                {/* Preview Drum Roll Button */}
+                <button
+                  type="button"
+                  disabled={isPreviewRolling}
+                  onClick={handleStartDrumPreview}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                  title="Roll drum through all names so audience can see everyone is in the draw"
+                >
+                  <Dices className="h-3.5 w-3.5 text-slate-500" />
+                  {isPreviewRolling ? 'Rolling...' : `Preview Drum (${pool.length} Names)`}
+                </button>
+              </div>
+
+              {/* Reveal Pace */}
+              <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                <span className="font-medium text-slate-700">Pace:</span>
+                <div className="flex items-center rounded-lg bg-slate-100 p-0.5 text-xs">
+                  {(['fast', 'normal', 'dramatic'] as RevealSpeed[]).map((sp) => (
+                    <button
+                      key={sp}
+                      type="button"
+                      onClick={() => {
+                        setSpeed(sp);
+                        speedRef.current = sp;
+                      }}
+                      className={`rounded px-2.5 py-1 capitalize transition-colors ${
+                        speed === sp
+                          ? 'bg-white text-slate-950 font-bold shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {sp}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Bottom Row: Batch Selection & Start Draw Action */}
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between pt-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-medium text-slate-500">Pick per draw:</span>
                 <div
                   role="group"
                   aria-label="Winners per draw batch"
@@ -897,39 +1228,17 @@ export const DrawStage: React.FC<DrawStageProps> = ({
                 </div>
               </div>
 
-              {/* Reveal Pace */}
-              <div className="flex items-center gap-1.5 text-xs text-slate-500 border-l border-slate-200 pl-3">
-                <span>Pace:</span>
-                <div className="flex items-center rounded-lg bg-slate-100 p-0.5 text-xs">
-                  {(['fast', 'normal', 'dramatic'] as RevealSpeed[]).map((sp) => (
-                    <button
-                      key={sp}
-                      type="button"
-                      onClick={() => {
-                        setSpeed(sp);
-                        speedRef.current = sp;
-                      }}
-                      className={`rounded px-2 py-1 capitalize transition-colors ${
-                        speed === sp ? 'bg-white text-slate-950 font-semibold shadow-2xs' : 'text-slate-600'
-                      }`}
-                    >
-                      {sp}
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <button
+                type="button"
+                onClick={handleStartDraw}
+                disabled={!canDraw}
+                data-testid="start-draw-button"
+                className={`inline-flex h-12 items-center justify-center gap-2.5 rounded-xl px-8 text-base font-bold text-white transition-all disabled:opacity-50 whitespace-nowrap shrink-0 shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${palette.primaryBg} ${palette.primaryHover} ${palette.ring}`}
+              >
+                <Play className="h-4 w-4 fill-current" aria-hidden="true" />
+                Start Live Draw ({effectiveDrawCount})
+              </button>
             </div>
-
-            <button
-              type="button"
-              onClick={handleStartDraw}
-              disabled={!canDraw}
-              data-testid="start-draw-button"
-              className={`inline-flex h-12 items-center justify-center gap-2.5 rounded-lg px-7 text-base font-bold text-white transition-colors disabled:opacity-50 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${palette.primaryBg} ${palette.primaryHover} ${palette.ring}`}
-            >
-              <Play className="h-4 w-4 fill-current" aria-hidden="true" />
-              Start One-by-One Draw ({effectiveDrawCount})
-            </button>
           </div>
         )}
       </div>

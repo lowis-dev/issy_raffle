@@ -29,3 +29,4 @@ npm run dev
 - `npm run lint` — Run TypeScript type checking (`tsc --noEmit`)
 - `npm test` — Run unit tests for the raffle engine and CSV parser
 - `npm run build` — Build the production bundle into `dist/`
+<!-- Verified push Tue Nov 24 16:42:06 PST 2026 -->

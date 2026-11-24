@@ -36,6 +36,7 @@ const SPEED_OPTIONS = [
   { label: 'Fast (1.4s)', ms: 1400 },
   { label: 'Standard (2.6s)', ms: 2600 },
   { label: 'Dramatic (4.2s)', ms: 4200 },
+  { label: 'Suspense (6.8s)', ms: 6800 },
 ];
 
 export const CustomizeView: React.FC<CustomizeViewProps> = ({

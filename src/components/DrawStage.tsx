@@ -52,7 +52,7 @@ interface DrawStageProps {
   onOpenBonusModal?: (round?: RaffleRound) => void;
 }
 
-type RevealSpeed = 'fast' | 'normal' | 'dramatic';
+type RevealSpeed = 'fast' | 'normal' | 'dramatic' | 'suspense';
 
 interface DrumRollItem {
   prev: Participant | null;
@@ -270,7 +270,14 @@ export const DrawStage: React.FC<DrawStageProps> = ({
       setShowCelebrationModal(true);
     }
 
-    const dwell = speed === 'fast' ? 400 : speed === 'normal' ? 900 : 1500;
+    const dwell =
+      speed === 'fast'
+        ? 400
+        : speed === 'normal'
+        ? 900
+        : speed === 'dramatic'
+        ? 1500
+        : 2200;
     sequenceTimerRef.current = setTimeout(() => {
       runNextRevealStep(batchQueue, currentSlotIndex + 1, nextRevealed);
     }, dwell);
@@ -332,7 +339,14 @@ export const DrawStage: React.FC<DrawStageProps> = ({
 
     const N = candidateList.length;
     // Number of full laps across the pool before landing on target
-    const laps = currentSpeed === 'fast' ? 1 : currentSpeed === 'normal' ? 2 : 4;
+    const laps =
+      currentSpeed === 'fast'
+        ? 1
+        : currentSpeed === 'normal'
+        ? 2
+        : currentSpeed === 'dramatic'
+        ? 4
+        : 6;
     const totalSteps = laps * N + targetWinnerIdx + 1;
 
     let stepIdx = 0;
@@ -362,7 +376,14 @@ export const DrawStage: React.FC<DrawStageProps> = ({
       if (stepIdx < totalSteps) {
         const remaining = totalSteps - stepIdx;
         let delay: number;
-        const baseInterval = currentSpeed === 'fast' ? 16 : currentSpeed === 'normal' ? 26 : 42;
+        const baseInterval =
+          currentSpeed === 'fast'
+            ? 16
+            : currentSpeed === 'normal'
+            ? 26
+            : currentSpeed === 'dramatic'
+            ? 42
+            : 58;
 
         if (remaining > 10) {
           // Rapid cruising speed: names whirl by
@@ -370,7 +391,13 @@ export const DrawStage: React.FC<DrawStageProps> = ({
         } else {
           // Deceleration curve: tension builds as it slows down to land on the winner
           const slowdownFactor = Math.pow((11 - remaining) / 10, 2.4);
-          delay = baseInterval + slowdownFactor * (currentSpeed === 'dramatic' ? 520 : 320);
+          const maxSlowdown =
+            currentSpeed === 'suspense'
+              ? 820
+              : currentSpeed === 'dramatic'
+              ? 520
+              : 320;
+          delay = baseInterval + slowdownFactor * maxSlowdown;
         }
 
         stepTimerRef.current = setTimeout(executeRollStep, delay);
@@ -394,7 +421,14 @@ export const DrawStage: React.FC<DrawStageProps> = ({
           setShowCelebrationModal(true);
         }
 
-        const dwell = currentSpeed === 'fast' ? 200 : currentSpeed === 'normal' ? 500 : 900;
+        const dwell =
+          currentSpeed === 'fast'
+            ? 200
+            : currentSpeed === 'normal'
+            ? 500
+            : currentSpeed === 'dramatic'
+            ? 900
+            : 1600;
         sequenceTimerRef.current = setTimeout(() => {
           runNextRevealStep(queue, index + 1, nextRevealed);
         }, dwell);
@@ -838,7 +872,7 @@ export const DrawStage: React.FC<DrawStageProps> = ({
                   <div className="flex items-center gap-2">
                     {/* Speed Selector */}
                     <div className="flex items-center rounded-md bg-slate-200/80 p-0.5 text-[11px] font-semibold">
-                      {(['fast', 'normal', 'dramatic'] as RevealSpeed[]).map((sp) => (
+                      {(['fast', 'normal', 'dramatic', 'suspense'] as RevealSpeed[]).map((sp) => (
                         <button
                           key={sp}
                           type="button"
@@ -1395,7 +1429,7 @@ export const DrawStage: React.FC<DrawStageProps> = ({
               <div className="flex items-center gap-1.5 text-xs text-slate-500">
                 <span className="font-medium text-slate-700">Pace:</span>
                 <div className="flex items-center rounded-lg bg-slate-100 p-0.5 text-xs">
-                  {(['fast', 'normal', 'dramatic'] as RevealSpeed[]).map((sp) => (
+                  {(['fast', 'normal', 'dramatic', 'suspense'] as RevealSpeed[]).map((sp) => (
                     <button
                       key={sp}
                       type="button"

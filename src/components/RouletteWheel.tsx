@@ -10,7 +10,7 @@ export interface RouletteWheelProps {
   onSpinComplete: () => void;
   palette: ThemePalette;
   soundEnabled: boolean;
-  speed?: 'fast' | 'normal' | 'dramatic';
+  speed?: 'fast' | 'normal' | 'dramatic' | 'suspense';
   disabled?: boolean;
   onTriggerSpin?: () => void;
 }
@@ -337,14 +337,22 @@ export const RouletteWheel: React.FC<RouletteWheelProps> = ({
         ? 5 + Math.floor(Math.random() * 2)
         : speed === 'normal'
         ? 8 + Math.floor(Math.random() * 3)
-        : 14 + Math.floor(Math.random() * 4);
+        : speed === 'dramatic'
+        ? 14 + Math.floor(Math.random() * 4)
+        : 20 + Math.floor(Math.random() * 5); // suspense: ultra slow tension
 
     const startAngle = currentAngleRef.current;
     const totalRotation = fullTurns * 2 * Math.PI + angleDiff + jitter;
     const finalTargetAngle = startAngle + totalRotation;
 
     const duration =
-      speed === 'fast' ? 2200 : speed === 'normal' ? 4200 : 7000;
+      speed === 'fast'
+        ? 2200
+        : speed === 'normal'
+        ? 4200
+        : speed === 'dramatic'
+        ? 7000
+        : 10500; // suspense: 10.5 seconds of tension
 
     const startTime = performance.now();
     lastSliceIdxRef.current = getSliceUnderNeedle(startAngle);

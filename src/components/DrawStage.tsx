@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronUp,
   Dices,
+  Disc3,
   FastForward,
   Gift,
   Maximize2,
@@ -25,6 +26,7 @@ import { secureRandomInt, secureShuffle } from '../utils/raffleEngine';
 import { playTickSound, playWinFanfare } from '../utils/sound';
 import type { ThemePalette } from '../utils/theme';
 import { LiveDrawModal } from './LiveDrawModal';
+import { RouletteWheel } from './RouletteWheel';
 
 interface DrawStageProps {
   activeRound: RaffleRound;
@@ -82,6 +84,9 @@ export const DrawStage: React.FC<DrawStageProps> = ({
   const [isExpanded, setIsExpanded] = useState(false);
   const [isBottomExpanded, setIsBottomExpanded] = useState(false);
 
+  // Visual Display Mode: 'wheel' (Roulette Wheel of Names) vs 'drum' (Casino Slot Drum)
+  const [stageMode, setStageMode] = useState<'wheel' | 'drum'>('wheel');
+
   // Spin Fairness & Order Settings (User configurable: 1-to-last & randomize)
   const [randomizeSpinOrder, setRandomizeSpinOrder] = useState<boolean>(true);
   const [sweepAllNames, setSweepAllNames] = useState<boolean>(true);
@@ -116,6 +121,7 @@ export const DrawStage: React.FC<DrawStageProps> = ({
   const isPausedRef = useRef(isPaused);
   const randomizeOrderRef = useRef(randomizeSpinOrder);
   const sweepAllRef = useRef(sweepAllNames);
+  const stageModeRef = useRef(stageMode);
 
   onExecuteDrawRef.current = onExecuteDraw;
   settingsRef.current = settings;
@@ -123,6 +129,7 @@ export const DrawStage: React.FC<DrawStageProps> = ({
   isPausedRef.current = isPaused;
   randomizeOrderRef.current = randomizeSpinOrder;
   sweepAllRef.current = sweepAllNames;
+  stageModeRef.current = stageMode;
 
   // Cleanup on unmount or round change
   const clearSequenceTimers = () => {
@@ -214,7 +221,34 @@ export const DrawStage: React.FC<DrawStageProps> = ({
     }
   };
 
-  // Step runner for progressive one-by-one reveals sweeping from 1 to last
+  // Callback when RouletteWheel completes its physical spin
+  const handleWheelSpinComplete = () => {
+    setActiveSlotSpinning(false);
+    fireLightCelebration();
+
+    if (isPreviewRolling) {
+      setIsPreviewRolling(false);
+      setBatchQueue([]);
+      setPreviewCompleteMessage(
+        `Fairness Check Complete: All ${pool.length} entries verified on roulette wheel!`
+      );
+      setTimeout(() => setPreviewCompleteMessage(null), 5000);
+      return;
+    }
+
+    const targetWinner = batchQueue[currentSlotIndex];
+    if (!targetWinner) return;
+
+    const nextRevealed = [targetWinner, ...revealedInBatch];
+    setRevealedInBatch(nextRevealed);
+
+    const dwell = speed === 'fast' ? 400 : speed === 'normal' ? 900 : 1500;
+    sequenceTimerRef.current = setTimeout(() => {
+      runNextRevealStep(batchQueue, currentSlotIndex + 1, nextRevealed);
+    }, dwell);
+  };
+
+  // Step runner for progressive one-by-one reveals with true circular roulette physics
   const runNextRevealStep = (
     queue: WinnerRecord[],
     index: number,
@@ -241,10 +275,17 @@ export const DrawStage: React.FC<DrawStageProps> = ({
 
     const targetWinner = queue[index];
     const currentSpeed = speedRef.current;
-    const shouldRandomize = randomizeOrderRef.current;
-    const shouldSweepAll = sweepAllRef.current;
+    const currentMode = stageModeRef.current;
 
-    // Build the candidate spin stream that passes from 1 to last
+    // IF ROULETTE WHEEL MODE:
+    // The RouletteWheel component handles its own angular physics and calls handleWheelSpinComplete!
+    if (currentMode === 'wheel') {
+      return;
+    }
+
+    // IF SLOT DRUM MODE:
+    // Continuous cyclical loop (true roulette ribbon physics)
+    const shouldRandomize = randomizeOrderRef.current;
     let candidateList: Participant[] = shouldRandomize
       ? secureShuffle(pool)
       : [...pool];
@@ -253,42 +294,35 @@ export const DrawStage: React.FC<DrawStageProps> = ({
       candidateList = [targetWinner.participant];
     }
 
-    // Determine candidate roll sequence
-    let sweepSequence: Participant[];
-    if (shouldSweepAll || pool.length <= 35) {
-      // Complete sweep: all names in pool pass through so everyone is seen ("makita muna para fair")
-      sweepSequence = [...candidateList];
-    } else {
-      // Quick sweep for very large multi-winner draws
-      sweepSequence = candidateList.slice(0, Math.min(25, candidateList.length));
+    let targetWinnerIdx = candidateList.findIndex(
+      (p) => p.id === targetWinner.participant.id
+    );
+    if (targetWinnerIdx === -1) {
+      candidateList.push(targetWinner.participant);
+      targetWinnerIdx = candidateList.length - 1;
     }
 
-    // Ensure the sweep concludes cleanly and precisely on the chosen target winner
-    const withoutTarget = sweepSequence.filter((p) => p.id !== targetWinner.participant.id);
-    const finalRollSequence = [...withoutTarget, targetWinner.participant];
-    const totalSteps = finalRollSequence.length;
+    const N = candidateList.length;
+    // Number of full laps across the pool before landing on target
+    const laps = currentSpeed === 'fast' ? 1 : currentSpeed === 'normal' ? 2 : 4;
+    const totalSteps = laps * N + targetWinnerIdx + 1;
 
     let stepIdx = 0;
 
     const executeRollStep = () => {
       if (isPausedRef.current) return;
 
-      const curr = finalRollSequence[stepIdx];
-      const prev =
-        stepIdx > 0
-          ? finalRollSequence[stepIdx - 1]
-          : finalRollSequence[finalRollSequence.length - 1];
-      const next =
-        stepIdx < finalRollSequence.length - 1
-          ? finalRollSequence[stepIdx + 1]
-          : finalRollSequence[0];
+      const currIdx = stepIdx % N;
+      const curr = candidateList[currIdx];
+      const prev = candidateList[(currIdx - 1 + N) % N];
+      const next = candidateList[(currIdx + 1) % N];
 
       setDrum({
         prev,
         curr,
         next,
-        step: stepIdx + 1,
-        total: totalSteps,
+        step: currIdx + 1,
+        total: N,
       });
 
       if (settingsRef.current.soundEnabled) {
@@ -300,17 +334,15 @@ export const DrawStage: React.FC<DrawStageProps> = ({
       if (stepIdx < totalSteps) {
         const remaining = totalSteps - stepIdx;
         let delay: number;
+        const baseInterval = currentSpeed === 'fast' ? 16 : currentSpeed === 'normal' ? 26 : 42;
 
-        // Base velocity
-        const baseInterval = currentSpeed === 'fast' ? 16 : currentSpeed === 'normal' ? 32 : 55;
-
-        if (remaining > 8) {
-          // Rapid cruising speed: names stream past
+        if (remaining > 10) {
+          // Rapid cruising speed: names whirl by
           delay = baseInterval;
         } else {
           // Deceleration curve: tension builds as it slows down to land on the winner
-          const slowdownFactor = Math.pow((9 - remaining) / 8, 2.2);
-          delay = baseInterval + slowdownFactor * (currentSpeed === 'dramatic' ? 480 : 280);
+          const slowdownFactor = Math.pow((11 - remaining) / 10, 2.4);
+          delay = baseInterval + slowdownFactor * (currentSpeed === 'dramatic' ? 520 : 320);
         }
 
         stepTimerRef.current = setTimeout(executeRollStep, delay);
@@ -325,7 +357,7 @@ export const DrawStage: React.FC<DrawStageProps> = ({
         const nextRevealed = [targetWinner, ...alreadyRevealed];
         setRevealedInBatch(nextRevealed);
 
-        const dwell = currentSpeed === 'fast' ? 160 : currentSpeed === 'normal' ? 400 : 750;
+        const dwell = currentSpeed === 'fast' ? 200 : currentSpeed === 'normal' ? 500 : 900;
         sequenceTimerRef.current = setTimeout(() => {
           runNextRevealStep(queue, index + 1, nextRevealed);
         }, dwell);
@@ -342,6 +374,27 @@ export const DrawStage: React.FC<DrawStageProps> = ({
     clearSequenceTimers();
     setIsPreviewRolling(true);
     setPreviewCompleteMessage(null);
+
+    if (stageModeRef.current === 'wheel') {
+      const demoWinner = pool[Math.floor(Math.random() * pool.length)];
+      setActiveSlotSpinning(true);
+      setBatchQueue([
+        {
+          id: 'demo-preview',
+          participant: demoWinner,
+          roundId: activeRound.id,
+          roundOrder: activeRound.order,
+          roundTitle: activeRound.title,
+          prize: 'Audience Fairness Demo',
+          slotNumber: 0,
+          batchNumber: 0,
+          drawnAt: new Date().toISOString(),
+          claimed: false,
+          status: 'active',
+        },
+      ]);
+      return;
+    }
 
     const shouldRandomize = randomizeOrderRef.current;
     const previewList = shouldRandomize ? secureShuffle(pool) : [...pool];
@@ -765,68 +818,104 @@ export const DrawStage: React.FC<DrawStageProps> = ({
                 />
               </div>
 
-              {/* 3-Tier Moving Slot Drum with Vignettes */}
-              <div className="relative w-full overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-100/70 via-white to-slate-100/70 p-3 shadow-inner">
-                {/* Drum Depth Vignettes */}
-                <div className="pointer-events-none absolute inset-x-0 top-0 h-10 bg-gradient-to-b from-slate-100 to-transparent z-10" />
-                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-slate-100 to-transparent z-10" />
+              {/* Center Display: Roulette Wheel or 3-Tier Moving Slot Drum */}
+              {stageMode === 'wheel' ? (
+                <div className="flex flex-col items-center justify-center py-2">
+                  <RouletteWheel
+                    participants={pool}
+                    targetWinner={currentSlotWinner ? currentSlotWinner.participant : null}
+                    isSpinning={activeSlotSpinning}
+                    onSpinComplete={handleWheelSpinComplete}
+                    palette={palette}
+                    soundEnabled={settings.soundEnabled}
+                    speed={speed}
+                    disabled={isPaused}
+                  />
 
-                {/* Previous Item (Rolling above) */}
-                <div className="h-9 flex items-center justify-center opacity-30 scale-95 transition-all">
-                  <p className="font-display text-base text-slate-600 truncate">
-                    {drum.prev?.name || '...'}
-                  </p>
-                </div>
-
-                {/* Center Spotlight Card (Active Winner or Cycling Entry) */}
-                <div
-                  className={`my-1.5 rounded-xl border p-4 sm:p-5 transition-all duration-100 shadow-sm ${
-                    activeSlotSpinning || isPreviewRolling
-                      ? 'border-emerald-400 bg-white ring-4 ring-emerald-500/15 scale-100'
-                      : 'border-slate-300 bg-white scale-[1.02]'
-                  }`}
-                >
-                  <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
-                    <span className="font-mono font-bold text-slate-700 bg-slate-100 px-2.5 py-0.5 rounded-full">
-                      {isPreviewRolling
-                        ? 'Audience Fairness Check'
-                        : `Slot #${
-                            currentSlotWinner
-                              ? String(currentSlotWinner.slotNumber).padStart(3, '0')
-                              : '...'
-                          }`}
-                    </span>
-                    {(activeSlotSpinning || isPreviewRolling) && drum.total > 0 && (
-                      <span className="font-mono text-emerald-600 font-bold animate-pulse">
-                        Entry {drum.step} / {drum.total} ·{' '}
-                        {randomizeSpinOrder ? 'Shuffled' : '1-to-Last'}
+                  {/* Winner Spotlight Card underneath wheel */}
+                  {currentSlotWinner && !activeSlotSpinning && (
+                    <div className="mt-3 w-full max-w-md rounded-xl border border-emerald-300 bg-white p-4 text-center shadow-xs">
+                      <span className="font-mono text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full">
+                        Winner Slot #{String(currentSlotWinner.slotNumber).padStart(3, '0')}
                       </span>
-                    )}
+                      <p className="mt-1 font-display text-2xl font-black text-slate-950 truncate">
+                        {currentSlotWinner.participant.name}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {[
+                          currentSlotWinner.participant.ticketNumber,
+                          currentSlotWinner.participant.department,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* 3-Tier Moving Slot Drum with Vignettes */
+                <div className="relative w-full overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-100/70 via-white to-slate-100/70 p-3 shadow-inner">
+                  {/* Drum Depth Vignettes */}
+                  <div className="pointer-events-none absolute inset-x-0 top-0 h-10 bg-gradient-to-b from-slate-100 to-transparent z-10" />
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-slate-100 to-transparent z-10" />
+
+                  {/* Previous Item (Rolling above) */}
+                  <div className="h-9 flex items-center justify-center opacity-30 scale-95 transition-all">
+                    <p className="font-display text-base text-slate-600 truncate">
+                      {drum.prev?.name || '...'}
+                    </p>
                   </div>
 
-                  <p className="font-display text-2xl sm:text-4xl lg:text-5xl font-black tracking-tight text-slate-950 truncate">
-                    {drum.curr?.name || 'Ready to Spin'}
-                  </p>
-
-                  <div className="mt-1 flex flex-wrap items-center justify-center gap-2 text-xs sm:text-sm text-slate-500">
-                    {settings.showTicketNumber && drum.curr?.ticketNumber && (
-                      <span className="font-mono font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
-                        {drum.curr.ticketNumber}
+                  {/* Center Spotlight Card (Active Winner or Cycling Entry) */}
+                  <div
+                    className={`my-1.5 rounded-xl border p-4 sm:p-5 transition-all duration-100 shadow-sm ${
+                      activeSlotSpinning || isPreviewRolling
+                        ? 'border-emerald-400 bg-white ring-4 ring-emerald-500/15 scale-100'
+                        : 'border-slate-300 bg-white scale-[1.02]'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
+                      <span className="font-mono font-bold text-slate-700 bg-slate-100 px-2.5 py-0.5 rounded-full">
+                        {isPreviewRolling
+                          ? 'Audience Fairness Check'
+                          : `Slot #${
+                              currentSlotWinner
+                                ? String(currentSlotWinner.slotNumber).padStart(3, '0')
+                                : '...'
+                            }`}
                       </span>
-                    )}
-                    {settings.showDepartment && drum.curr?.department && (
-                      <span>{drum.curr.department}</span>
-                    )}
+                      {(activeSlotSpinning || isPreviewRolling) && drum.total > 0 && (
+                        <span className="font-mono text-emerald-600 font-bold animate-pulse">
+                          Entry {drum.step} / {drum.total} ·{' '}
+                          {randomizeSpinOrder ? 'Shuffled' : '1-to-Last'}
+                        </span>
+                      )}
+                    </div>
+
+                    <p className="font-display text-2xl sm:text-4xl lg:text-5xl font-black tracking-tight text-slate-950 truncate">
+                      {drum.curr?.name || 'Ready to Spin'}
+                    </p>
+
+                    <div className="mt-1 flex flex-wrap items-center justify-center gap-2 text-xs sm:text-sm text-slate-500">
+                      {settings.showTicketNumber && drum.curr?.ticketNumber && (
+                        <span className="font-mono font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">
+                          {drum.curr.ticketNumber}
+                        </span>
+                      )}
+                      {settings.showDepartment && drum.curr?.department && (
+                        <span>{drum.curr.department}</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Next Item (Rolling below) */}
+                  <div className="h-9 flex items-center justify-center opacity-30 scale-95 transition-all">
+                    <p className="font-display text-base text-slate-600 truncate">
+                      {drum.next?.name || '...'}
+                    </p>
                   </div>
                 </div>
-
-                {/* Next Item (Rolling below) */}
-                <div className="h-9 flex items-center justify-center opacity-30 scale-95 transition-all">
-                  <p className="font-display text-base text-slate-600 truncate">
-                    {drum.next?.name || '...'}
-                  </p>
-                </div>
-              </div>
+              )}
 
               {/* Accumulating Live Revealed Winners Stream */}
               {revealedInBatch.length > 0 && (
@@ -1071,6 +1160,20 @@ export const DrawStage: React.FC<DrawStageProps> = ({
                 ))}
               </div>
             </div>
+          ) : stageMode === 'wheel' ? (
+            <div className="w-full flex flex-col items-center justify-center py-2">
+              <RouletteWheel
+                participants={pool}
+                targetWinner={null}
+                isSpinning={false}
+                onSpinComplete={() => {}}
+                palette={palette}
+                soundEnabled={settings.soundEnabled}
+                speed={speed}
+                disabled={!canDraw}
+                onTriggerSpin={canDraw ? handleStartDraw : undefined}
+              />
+            </div>
           ) : (
             <div className="w-full max-w-xl py-4 space-y-4">
               {/* Ready Drum Window */}
@@ -1117,59 +1220,91 @@ export const DrawStage: React.FC<DrawStageProps> = ({
         {/* Draw Controls Bar */}
         {!roundCompleted && pool.length > 0 && !isSequenceActive && (
           <div className="mt-6 flex flex-col gap-4 border-t border-slate-100 pt-5">
-            {/* Top Row: Fairness & Drum Controls */}
+            {/* Top Row: Visual Mode & Fairness Controls */}
             <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="font-bold text-slate-700">Drum Spin Settings:</span>
+                {/* Visual Style Mode Toggle */}
+                <div className="flex items-center rounded-lg bg-slate-100 p-0.5 text-xs font-semibold mr-1">
+                  <button
+                    type="button"
+                    onClick={() => setStageMode('wheel')}
+                    className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 transition-all ${
+                      stageMode === 'wheel'
+                        ? 'bg-white text-slate-950 font-bold shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Disc3 className="h-3.5 w-3.5 text-rose-500" />
+                    Roulette Wheel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStageMode('drum')}
+                    className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 transition-all ${
+                      stageMode === 'drum'
+                        ? 'bg-white text-slate-950 font-bold shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Shuffle className="h-3.5 w-3.5 text-emerald-600" />
+                    Slot Drum
+                  </button>
+                </div>
 
-                {/* Sweep All / 1-to-Last Toggle */}
-                <button
-                  type="button"
-                  onClick={() => setSweepAllNames((v) => !v)}
-                  className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-semibold transition-all ${
-                    sweepAllNames
-                      ? 'border-emerald-300 bg-emerald-50 text-emerald-800 shadow-2xs'
-                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                  }`}
-                  title={
-                    sweepAllNames
-                      ? 'Cycles through all names from 1 to last so everyone is seen'
-                      : 'Quick spin subset'
-                  }
-                >
-                  <RotateCcw className="h-3.5 w-3.5 text-emerald-600" />
-                  {sweepAllNames ? '1 to Last (All Names)' : 'Quick Reel'}
-                </button>
+                {stageMode === 'drum' && (
+                  <>
+                    {/* Sweep All / 1-to-Last Toggle */}
+                    <button
+                      type="button"
+                      onClick={() => setSweepAllNames((v) => !v)}
+                      className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-semibold transition-all ${
+                        sweepAllNames
+                          ? 'border-emerald-300 bg-emerald-50 text-emerald-800 shadow-2xs'
+                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                      }`}
+                      title={
+                        sweepAllNames
+                          ? 'Cycles through all names from 1 to last so everyone is seen'
+                          : 'Quick spin subset'
+                      }
+                    >
+                      <RotateCcw className="h-3.5 w-3.5 text-emerald-600" />
+                      {sweepAllNames ? '1 to Last (All Names)' : 'Quick Reel'}
+                    </button>
 
-                {/* Randomize / Sequential Order Toggle */}
-                <button
-                  type="button"
-                  onClick={() => setRandomizeSpinOrder((v) => !v)}
-                  className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-semibold transition-all ${
-                    randomizeSpinOrder
-                      ? 'border-indigo-300 bg-indigo-50 text-indigo-800 shadow-2xs'
-                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                  }`}
-                  title={
-                    randomizeSpinOrder
-                      ? 'Names are shuffled randomly during the sweep'
-                      : 'Names pass in sequential entry order (1 to last)'
-                  }
-                >
-                  <Shuffle className="h-3.5 w-3.5 text-indigo-600" />
-                  {randomizeSpinOrder ? 'Order: Randomized' : 'Order: 1 to Last'}
-                </button>
+                    {/* Randomize / Sequential Order Toggle */}
+                    <button
+                      type="button"
+                      onClick={() => setRandomizeSpinOrder((v) => !v)}
+                      className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-semibold transition-all ${
+                        randomizeSpinOrder
+                          ? 'border-indigo-300 bg-indigo-50 text-indigo-800 shadow-2xs'
+                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                      }`}
+                      title={
+                        randomizeSpinOrder
+                          ? 'Names are shuffled randomly during the sweep'
+                          : 'Names pass in sequential entry order (1 to last)'
+                      }
+                    >
+                      <Shuffle className="h-3.5 w-3.5 text-indigo-600" />
+                      {randomizeSpinOrder ? 'Order: Shuffled' : 'Order: 1 to Last'}
+                    </button>
+                  </>
+                )}
 
-                {/* Preview Drum Roll Button */}
+                {/* Preview Spin Button */}
                 <button
                   type="button"
                   disabled={isPreviewRolling}
                   onClick={handleStartDrumPreview}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
-                  title="Roll drum through all names so audience can see everyone is in the draw"
+                  title="Roll through all names so audience can see everyone is in the draw"
                 >
                   <Dices className="h-3.5 w-3.5 text-slate-500" />
-                  {isPreviewRolling ? 'Rolling...' : `Preview Drum (${pool.length} Names)`}
+                  {isPreviewRolling
+                    ? 'Rolling...'
+                    : `Fairness Preview (${pool.length} Names)`}
                 </button>
               </div>
 
